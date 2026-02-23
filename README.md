@@ -1,5 +1,6 @@
 # Voxel music app for iOS
 Voxel — единое пространство для вашей музыки.
+
 <img width="200" height="200" alt="Voxel icon" src="https://github.com/user-attachments/assets/4ede43bc-0e91-411f-854e-8a6465ede878" />
 
 
