@@ -1,4 +1,3 @@
-[README.md](https://github.com/user-attachments/files/25813331/README.md)
 # Sphere music app for iOS
 Shere — единое пространство для вашей музыки.
 
