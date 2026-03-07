@@ -1,0 +1,14 @@
+[README.md](https://github.com/user-attachments/files/25813331/README.md)
+# Sphere music app for iOS
+Shere — единое пространство для вашей музыки.
+
+<img width="200" height="200" alt="Sphere-iOS-Default-1024x1024@1x" src="https://github.com/user-attachments/assets/ae30c938-e57e-4049-b46c-ab77f55443ef" />
+
+
+# Что это за приложение?
+Shere это музыкальное приложение для iOS с открытым исходным кодом, которое собирает треки из разных стриминговых сервисов в единую библиотеку. Приложение создано для людей, которые по разным причинам используют сразу несколько музыкальных платформ на своём смартфоне и хотят объединить их в одном удобном пространстве.
+# Наши соцсети: 
+Официальный Telegram канал приложения: https://t.me/spheremusicios
+# Разработчики проекта:
+https://t.me/kirby_swift
+https://t.me/evgeniy558 
