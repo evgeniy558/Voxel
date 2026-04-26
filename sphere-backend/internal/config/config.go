@@ -48,9 +48,9 @@ func Load() (*Config, error) {
 		VKToken:          getEnv("VK_SERVICE_TOKEN", ""),
 		YandexToken:      getEnv("YANDEX_SERVICE_TOKEN", ""),
 		GeniusToken:      getEnv("GENIUS_TOKEN", ""),
-		RecaptchaSecret:  getEnv("RECAPTCHA_SECRET", "6LfytsssAAAAAKgi5g2SL6wU3B6qeUglw9YKJ6J9"),
-		RecaptchaSiteKey: getEnv("RECAPTCHA_SITE_KEY", "6LfytsssAAAAAITYZm3exkx5ODWZ8c8Nd_nysOBj"),
-		ResendAPIKey:     getEnv("RESEND_API_KEY", "re_u4Yu3Sqg_Md9pqwsAV6hufnKA2y73mMue"),
+		RecaptchaSecret:  getEnv("RECAPTCHA_SECRET", ""),
+		RecaptchaSiteKey: getEnv("RECAPTCHA_SITE_KEY", ""),
+		ResendAPIKey:     getEnv("RESEND_API_KEY", ""),
 		MailFrom:         getEnv("MAIL_FROM", "Sphere <noreply@spheremusic.space>"),
 	}
 
