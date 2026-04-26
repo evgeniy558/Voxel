@@ -1,0 +1,18 @@
+# Compiled binary
+/server
+*.exe
+*.out
+
+# Environment
+.env
+.env.local
+*.pem
+
+# Go build cache
+/vendor/
+/bin/
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
