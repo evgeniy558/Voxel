@@ -2,17 +2,13 @@ package comments
 
 import (
 	"context"
-	"crypto/aes"
 	"crypto/cipher"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,6 +16,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"sphere-backend/internal/config"
+	"sphere-backend/internal/crypto"
 )
 
 type Comment struct {
@@ -47,27 +46,12 @@ type Service struct {
 	scResolver         *soundCloudIDResolver
 }
 
-func NewService(pool *pgxpool.Pool, soundCloudClientID ...string) (*Service, error) {
-	keyHex := os.Getenv("COMMENT_ENCRYPTION_KEY")
-	if keyHex == "" {
-		keyHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	}
-	key, err := hex.DecodeString(keyHex)
-	if err != nil || len(key) != 32 {
+func NewService(pool *pgxpool.Pool, cfg *config.Config) (*Service, error) {
+	gcm, err := crypto.NewGCMFromHexKey(cfg.CommentEncryptionKey)
+	if err != nil {
 		return nil, fmt.Errorf("COMMENT_ENCRYPTION_KEY must be 64 hex chars (32 bytes)")
 	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	scClientID := strings.TrimSpace(os.Getenv("SOUNDCLOUD_CLIENT_ID"))
-	if len(soundCloudClientID) > 0 && strings.TrimSpace(soundCloudClientID[0]) != "" {
-		scClientID = strings.TrimSpace(soundCloudClientID[0])
-	}
+	scClientID := strings.TrimSpace(cfg.SoundCloudID)
 	httpClient := &http.Client{Timeout: 8 * time.Second}
 	return &Service{
 		pool:               pool,
@@ -84,20 +68,11 @@ func NewService(pool *pgxpool.Pool, soundCloudClientID ...string) (*Service, err
 }
 
 func (s *Service) encrypt(plaintext string) (ciphertext, nonce []byte, err error) {
-	n := make([]byte, s.gcm.NonceSize())
-	if _, err = io.ReadFull(rand.Reader, n); err != nil {
-		return nil, nil, err
-	}
-	ct := s.gcm.Seal(nil, n, []byte(plaintext), nil)
-	return ct, n, nil
+	return crypto.EncryptString(s.gcm, plaintext)
 }
 
 func (s *Service) decrypt(ciphertext, nonce []byte) (string, error) {
-	pt, err := s.gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return "", err
-	}
-	return string(pt), nil
+	return crypto.DecryptToString(s.gcm, ciphertext, nonce)
 }
 
 func (s *Service) Create(ctx context.Context, trackProvider, trackID, userID, userName, avatarURL, text string, parentID *string) (*Comment, error) {

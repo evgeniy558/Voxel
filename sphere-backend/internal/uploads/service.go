@@ -1,10 +1,12 @@
 package uploads
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -92,6 +94,43 @@ func (s *Service) Upload(ctx context.Context, userID, title, artistName, filenam
 		return nil, fmt.Errorf("save upload: %w", err)
 	}
 	return u, nil
+}
+
+// UploadAvatar stores a profile image under avatars/{userID}/… and returns the object key.
+func (s *Service) UploadAvatar(ctx context.Context, userID string, data []byte, contentType string) (string, error) {
+	if err := s.s3Required(); err != nil {
+		return "", err
+	}
+	contentType = strings.TrimSpace(strings.ToLower(contentType))
+	ext := ".jpg"
+	if strings.Contains(contentType, "png") {
+		ext = ".png"
+	} else if strings.Contains(contentType, "webp") {
+		ext = ".webp"
+	}
+	objectKey := fmt.Sprintf("avatars/%s/%d%s", userID, time.Now().UnixMilli(), ext)
+	ct := contentType
+	if ct == "" {
+		ct = "image/jpeg"
+	}
+	_, err := s.s3.PutObject(ctx, s.bucket, objectKey, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{
+		ContentType: ct,
+	})
+	if err != nil {
+		return "", fmt.Errorf("upload avatar: %w", err)
+	}
+	return objectKey, nil
+}
+
+func (s *Service) GetObjectReader(ctx context.Context, objectKey string) (io.ReadCloser, string, error) {
+	if err := s.s3Required(); err != nil {
+		return nil, "", err
+	}
+	obj, err := s.s3.GetObject(ctx, s.bucket, objectKey, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, "", err
+	}
+	return obj, objectKey, nil
 }
 
 func (s *Service) List(ctx context.Context, userID string) ([]Upload, error) {

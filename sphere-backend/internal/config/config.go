@@ -10,6 +10,8 @@ type Config struct {
 	DatabaseURL    string
 	JWTSecret      string
 	GoogleClientID string
+	CommentEncryptionKey string
+	ChatMessageKey       string
 	// reCAPTCHA v3: https://developers.google.com/recaptcha/docs/v3
 	RecaptchaSecret   string
 	RecaptchaSiteKey  string
@@ -37,6 +39,8 @@ func Load() (*Config, error) {
 		DatabaseURL:      getEnv("DATABASE_URL", ""),
 		JWTSecret:        getEnv("JWT_SECRET", ""),
 		GoogleClientID:   getEnv("GOOGLE_CLIENT_ID", ""),
+		CommentEncryptionKey: getEnv("COMMENT_ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
+		ChatMessageKey:       getEnv("CHAT_MESSAGE_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
 		S3Endpoint:       getEnv("S3_ENDPOINT", "http://localhost:9000"),
 		S3AccessKey:      getEnv("S3_ACCESS_KEY", ""),
 		S3SecretKey:      getEnv("S3_SECRET_KEY", ""),

@@ -3,6 +3,7 @@ package recommend
 import (
 	"context"
 	"errors"
+	"log"
 	"math/rand"
 	"sort"
 	"strings"
@@ -16,8 +17,9 @@ import (
 	"sphere-backend/internal/recommend/engine"
 )
 
-var coldStartEN = []string{"top hits 2025", "trending pop", "indie rock", "chill vibes", "electronic beats"}
-var coldStartRU = []string{"русский рэп 2025", "популярная музыка", "инди рок", "электронная музыка", "хиты 2025"}
+// Cold-start queries avoid year-centric “hits” strings so the feed doesn’t look like generic charts.
+var coldStartEN = []string{"trending pop", "indie rock", "chill vibes", "electronic beats", "alternative rock"}
+var coldStartRU = []string{"русский рэп", "популярная музыка", "инди рок", "электронная музыка", "альтернативный рок"}
 
 var genreRelated = map[string][]string{
 	"Pop":         {"pop hits", "dance pop", "synth pop"},
@@ -81,6 +83,9 @@ func (s *Service) GetRecommendations(ctx context.Context, userID, lang string) *
 
 	if legacy == nil {
 		legacy = &Response{Tracks: []model.Track{}, Albums: []model.Album{}, Artists: []model.Artist{}}
+	}
+	if engErr != nil {
+		log.Printf("[recommend] engine.Run failed user=%s: %v", userID, engErr)
 	}
 	if !userOK || engErr != nil || eng == nil || len(eng.Tracks) == 0 {
 		return legacy
@@ -287,6 +292,24 @@ func interleaveArtistGenreQueries(artistGroups [][]string, genreTerms []string, 
 	return zipAlternate(artPart, genPart, maxQ)
 }
 
+// defaultGenreDiscoveryQueries builds neutral genre/search terms (no “hits YEAR”) for onboarding edge cases.
+func defaultGenreDiscoveryQueries(maxQ int) []string {
+	if maxQ <= 0 {
+		return nil
+	}
+	labels := []string{"Pop", "Rock", "Hip-Hop", "Electronic", "Indie", "Latin", "R&B"}
+	var terms []string
+	for _, label := range labels {
+		if related, ok := genreRelated[label]; ok {
+			terms = append(terms, related...)
+		}
+	}
+	if len(terms) > maxQ {
+		return append([]string(nil), terms[:maxQ]...)
+	}
+	return terms
+}
+
 func (s *Service) legacyGetRecommendations(ctx context.Context, userID, lang string) *Response {
 	isRU := strings.Contains(strings.ToLower(lang), "ru")
 
@@ -321,15 +344,13 @@ func (s *Service) legacyGetRecommendations(ctx context.Context, userID, lang str
 			}
 		}
 		queries = interleaveArtistGenreQueries(artistGroups, genreTerms, maxSearchQueries)
-		if isRU && !hasRussianGenre(pref.SelectedGenres) {
-			extra := []string{"русская музыка", "хиты 2025"}
-			for _, q := range extra {
-				if len(queries) >= maxSearchQueries {
-					break
-				}
-				queries = append(queries, q)
-			}
-		}
+	}
+
+	hasOnboardingPrefs := pref != nil && pref.OnboardingCompleted &&
+		len(pref.SelectedArtists)+len(pref.SelectedGenres) > 0
+
+	if len(queries) == 0 && hasOnboardingPrefs {
+		queries = defaultGenreDiscoveryQueries(maxSearchQueries)
 	}
 
 	if len(queries) == 0 {
@@ -339,6 +360,10 @@ func (s *Service) legacyGetRecommendations(ctx context.Context, userID, lang str
 		queries = append(queries, artists...)
 	}
 
+	if len(queries) == 0 && pref != nil && pref.OnboardingCompleted {
+		queries = defaultGenreDiscoveryQueries(maxSearchQueries)
+	}
+
 	if len(queries) == 0 {
 		if isRU {
 			queries = coldStartRU
@@ -346,6 +371,13 @@ func (s *Service) legacyGetRecommendations(ctx context.Context, userID, lang str
 			queries = coldStartEN
 		}
 	}
+
+	nArt, nGen := 0, 0
+	if pref != nil {
+		nArt, nGen = len(pref.SelectedArtists), len(pref.SelectedGenres)
+	}
+	log.Printf("[recommend] legacy user=%s onboarding=%v artists=%d genres=%d queries=%d",
+		userID, pref != nil && pref.OnboardingCompleted, nArt, nGen, len(queries))
 
 	// Onboarding: no shuffle — interleave already gives each artist/ genre fair coverage; shuffle would only reorder.
 	if !fromOnboarding {
@@ -438,17 +470,6 @@ func filterWithCover[T any](in []T, getURL func(T) string) []T {
 		return in
 	}
 	return out
-}
-
-func hasRussianGenre(genres []string) bool {
-	for _, g := range genres {
-		for _, r := range []rune(g) {
-			if r >= 0x0400 && r <= 0x04FF {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func capSlice[T any](in []T, max int) []T {

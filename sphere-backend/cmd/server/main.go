@@ -13,8 +13,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 
+	"sphere-backend/internal/admin"
 	"sphere-backend/internal/auth"
 	"sphere-backend/internal/comments"
+	"sphere-backend/internal/chat"
 	"sphere-backend/internal/config"
 	"sphere-backend/internal/db"
 	"sphere-backend/internal/favorites"
@@ -24,6 +26,7 @@ import (
 	"sphere-backend/internal/preferences"
 	"sphere-backend/internal/provider"
 	"sphere-backend/internal/recommend"
+	"sphere-backend/internal/social"
 	"sphere-backend/internal/uploads"
 	"sphere-backend/internal/user"
 )
@@ -79,13 +82,21 @@ func main() {
 	music.SetGeniusToken(cfg.GeniusToken)
 	prefsSvc := preferences.NewService(pool)
 	recommendSvc := recommend.NewService(historySvc, musicSvc, prefsSvc, spotifyRef)
-	commentsSvc, err := comments.NewService(pool, cfg.SoundCloudID)
+	commentsSvc, err := comments.NewService(pool, cfg)
 	if err != nil {
 		log.Fatal("comments init: ", err)
 	}
 
+	chatHub := chat.NewHub()
+	chatSvc, err := chat.NewService(pool, cfg, chatHub)
+	if err != nil {
+		log.Fatal("chat init: ", err)
+	}
+	socialSvc := social.NewService(pool)
+
 	// Handlers
 	authH := auth.NewHandler(authSvc, cfg)
+	accountH := auth.NewAccountHandler(authSvc, userSvc, uploadSvc, cfg)
 	userH := user.NewHandler(userSvc)
 	musicH := music.NewHandlerWithDB(musicSvc, pool, cfg.GeniusToken)
 	favH := favorites.NewHandler(favSvc)
@@ -94,6 +105,9 @@ func main() {
 	recommendH := recommend.NewHandler(recommendSvc)
 	prefsH := preferences.NewHandler(prefsSvc)
 	commentsH := comments.NewHandler(commentsSvc)
+	socialH := social.NewHandler(socialSvc, favSvc, historySvc)
+	chatH := chat.NewHandler(chatSvc, chatHub, cfg.JWTSecret)
+	adminH := admin.NewHandler(pool)
 
 	// Router
 	r := chi.NewRouter()
@@ -111,7 +125,13 @@ func main() {
 	r.Post("/auth/signup-code", authH.SendSignupCode)
 	r.Post("/auth/register", authH.Register)
 	r.Post("/auth/login", authH.Login)
+	r.Post("/auth/2fa/verify", authH.TwoFactorVerify)
 	r.Post("/auth/google", authH.Google)
+
+	r.Post("/auth/qr/start", authH.QRLoginStart)
+	r.Get("/auth/qr/poll", authH.QRLoginPoll)
+
+	r.Get("/public/avatar/{userID}/{filename}", accountH.PublicAvatar)
 
 	// Music endpoints (public — no auth required for testing)
 	r.Get("/search", musicH.Search)
@@ -127,12 +147,36 @@ func main() {
 	r.Get("/albums/{provider}/{id}", musicH.GetAlbum)
 	r.Get("/playlists/{provider}/{id}", musicH.GetPlaylist)
 
+	// Chat WebSocket (auth via ?token=JWT)
+	r.Get("/ws", chatH.WS)
+
 	// Protected routes (require JWT)
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.JWTAuth(cfg.JWTSecret))
 
 		r.Get("/user/me", userH.GetMe)
 		r.Put("/user/me", userH.UpdateMe)
+
+		r.Post("/account/change-password", accountH.ChangePassword)
+		r.Post("/account/change-email/start", accountH.ChangeEmailStart)
+		r.Post("/account/change-email/confirm", accountH.ChangeEmailConfirm)
+		r.Post("/account/avatar", accountH.UploadAvatar)
+
+		r.Post("/account/2fa/totp/setup", accountH.TOTPSetup)
+		r.Post("/account/2fa/totp/enable", accountH.TOTPEnable)
+		r.Post("/account/2fa/totp/disable", accountH.TOTPDisable)
+		r.Post("/account/2fa/email/enable", accountH.Email2FAEnable)
+		r.Post("/account/2fa/email/disable", accountH.Email2FADisable)
+		r.Patch("/account/privacy", accountH.UpdatePrivacy)
+
+		r.Post("/auth/qr/approve", authH.QRApprove)
+
+		r.With(middleware.AdminOnly(pool)).Get("/admin/users", adminH.ListUsers)
+		r.With(middleware.AdminOnly(pool)).Get("/admin/users/{id}", adminH.GetUser)
+		r.With(middleware.AdminOnly(pool)).Post("/admin/users/{id}/ban", adminH.Ban)
+		r.With(middleware.AdminOnly(pool)).Post("/admin/users/{id}/unban", adminH.Unban)
+		r.With(middleware.AdminOnly(pool)).Put("/admin/users/{id}/verified", adminH.SetVerified)
+		r.With(middleware.AdminOnly(pool)).Put("/admin/users/{id}/badge", adminH.SetBadge)
 
 		r.Get("/user/preferences", prefsH.Get)
 		r.Post("/user/preferences", prefsH.Save)
@@ -154,6 +198,26 @@ func main() {
 		r.Get("/uploads", uploadH.List)
 		r.Get("/uploads/{id}/stream", uploadH.Stream)
 		r.Delete("/uploads/{id}", uploadH.Delete)
+
+		// Social/profile
+		r.Get("/users/search", socialH.SearchUsers)
+		r.Get("/users/{id}/profile", socialH.GetProfile)
+		r.Get("/users/{id}/favorites", socialH.GetUserFavorites)
+		r.Get("/users/{id}/history", socialH.GetUserHistory)
+		r.Get("/users/{id}/subscriptions", socialH.ListSubscriptions)
+		r.Get("/users/{id}/subscribers", socialH.ListSubscribers)
+		r.Post("/users/{id}/subscribe", socialH.Subscribe)
+		r.Delete("/users/{id}/subscribe", socialH.Unsubscribe)
+
+		r.Get("/me/subscription-requests", socialH.ListIncomingRequests)
+		r.Post("/me/subscription-requests/{requestID}/approve", socialH.ApproveRequest)
+		r.Post("/me/subscription-requests/{requestID}/deny", socialH.DenyRequest)
+
+		// Chat REST
+		r.Get("/chats", chatH.ListChats)
+		r.Post("/chats", chatH.OpenOrCreateDM)
+		r.Get("/chats/{id}/messages", chatH.ListMessages)
+		r.Post("/chats/{id}/messages", chatH.SendMessage)
 	})
 
 	// Server

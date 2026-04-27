@@ -125,4 +125,108 @@ CREATE TABLE IF NOT EXISTS signup_email_codes (
     code_hash TEXT NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL
 );
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS badge_color TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS banned BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS banned_reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_pending_secret TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_2fa_enabled BOOLEAN NOT NULL DEFAULT false;
+
+-- Social/privacy
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT NOT NULL DEFAULT '';
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique_idx ON users (lower(username)) WHERE username <> '';
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS hide_subscriptions BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS messages_mutual_only BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS private_profile BOOLEAN NOT NULL DEFAULT false;
+
+CREATE TABLE IF NOT EXISTS subscriptions (
+    follower_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    followee_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (follower_id, followee_id)
+);
+CREATE INDEX IF NOT EXISTS subscriptions_followee_idx ON subscriptions(followee_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS subscriptions_follower_idx ON subscriptions(follower_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS subscription_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    requester_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    target_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'denied', 'cancelled')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS subscription_requests_target_idx ON subscription_requests(target_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS subscription_requests_requester_idx ON subscription_requests(requester_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS subscription_requests_one_pending_idx
+    ON subscription_requests(requester_id, target_id)
+    WHERE status = 'pending';
+
+-- Chat
+CREATE TABLE IF NOT EXISTS chats (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    kind TEXT NOT NULL DEFAULT 'dm' CHECK (kind IN ('dm')),
+    dm_user1 UUID REFERENCES users(id) ON DELETE CASCADE,
+    dm_user2 UUID REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_message_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS chats_dm_pair_unique_idx
+    ON chats(dm_user1, dm_user2)
+    WHERE kind = 'dm' AND dm_user1 IS NOT NULL AND dm_user2 IS NOT NULL;
+CREATE INDEX IF NOT EXISTS chats_last_message_idx ON chats(last_message_at DESC);
+
+CREATE TABLE IF NOT EXISTS chat_participants (
+    chat_id UUID NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    last_read_at TIMESTAMPTZ,
+    PRIMARY KEY (chat_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS chat_participants_user_idx ON chat_participants(user_id);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    chat_id UUID NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    sender_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL DEFAULT 'text' CHECK (kind IN ('text', 'track_share')),
+    encrypted_payload BYTEA NOT NULL,
+    nonce BYTEA NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS chat_messages_chat_time_idx ON chat_messages(chat_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS email_change_codes (
+    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    new_email TEXT NOT NULL,
+    code_hash TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS qr_login_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    nonce TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    token TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    client_ip TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS qr_login_sessions_nonce_idx ON qr_login_sessions(nonce);
+
+CREATE TABLE IF NOT EXISTS login_2fa_challenges (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    email_sent BOOLEAN NOT NULL DEFAULT false
+);
+
+CREATE INDEX IF NOT EXISTS login_2fa_challenges_user_idx ON login_2fa_challenges(user_id);
 `

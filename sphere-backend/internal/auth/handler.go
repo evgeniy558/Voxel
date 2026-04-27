@@ -207,12 +207,48 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, token, err := h.svc.Login(r.Context(), req.Email, req.Password)
+	out, err := h.svc.Login(r.Context(), req.Email, req.Password)
 	if err != nil {
-		http.Error(w, `{"error":"invalid credentials"}`, http.StatusUnauthorized)
+		msg := err.Error()
+		st := http.StatusUnauthorized
+		if strings.Contains(msg, "suspended") {
+			st = http.StatusForbidden
+		}
+		http.Error(w, `{"error":"`+escapeJSONString(msg)+`"}`, st)
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/json")
+	if out.Requires2FA {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"requires_2fa":  true,
+			"challenge_id":  out.ChallengeID,
+			"methods":       out.TwoFAMethods,
+			"user":          out.User,
+		})
+		return
+	}
+	json.NewEncoder(w).Encode(authResponse{Token: out.Token, User: out.User})
+}
+
+type twoFactorVerifyRequest struct {
+	ChallengeID string `json:"challenge_id"`
+	Method      string `json:"method"`
+	Code        string `json:"code"`
+}
+
+// TwoFactorVerify completes login after password step when 2FA is enabled.
+func (h *Handler) TwoFactorVerify(w http.ResponseWriter, r *http.Request) {
+	var req twoFactorVerifyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		return
+	}
+	u, token, err := h.svc.CompleteTwoFactor(r.Context(), req.ChallengeID, req.Method, req.Code)
+	if err != nil {
+		http.Error(w, `{"error":"`+escapeJSONString(err.Error())+`"}`, http.StatusBadRequest)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(authResponse{Token: token, User: u})
 }
