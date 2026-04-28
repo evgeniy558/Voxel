@@ -114,6 +114,12 @@ func main() {
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.RealIP)
+	r.Use(middleware.CORS([]string{
+		"http://localhost:3001",
+		"http://127.0.0.1:3001",
+		"https://spheremusic.space",
+		"https://www.spheremusic.space",
+	}))
 
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte(`{"status":"ok"}`))

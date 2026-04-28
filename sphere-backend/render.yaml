@@ -1,0 +1,86 @@
+# Render Blueprint for sphere-backend
+# Docs: https://render.com/docs/blueprint-spec
+#
+# Deploys the Go API as a Docker web service backed by a managed Postgres.
+# All third-party tokens are declared as `sync: false` so they can be filled
+# in via the Render Dashboard (never commit plaintext secrets).
+
+databases:
+  - name: sphere-db
+    databaseName: sphere
+    user: sphere
+    plan: free
+    region: oregon
+    postgresMajorVersion: "16"
+
+services:
+  - type: web
+    name: sphere-api
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # --- Wired automatically ---
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sphere-db
+          property: connectionString
+
+      # --- Auto-generated secrets (Render fills these on first apply) ---
+      - key: JWT_SECRET
+        generateValue: true
+
+      # --- Required secrets (set in Dashboard) ---
+      # 64 hex chars (32 bytes). Generate with: openssl rand -hex 32
+      - key: COMMENT_ENCRYPTION_KEY
+        sync: false
+      - key: CHAT_MESSAGE_KEY
+        sync: false
+
+      # --- Object storage (bring-your-own S3-compatible provider) ---
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false
+      - key: S3_BUCKET
+        value: sphere-uploads
+
+      # --- Auth / anti-abuse ---
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: RECAPTCHA_SECRET
+        sync: false
+      - key: RECAPTCHA_SITE_KEY
+        sync: false
+      - key: RECAPTCHA_MIN_SCORE
+        value: "0.5"
+
+      # --- Email (Resend) ---
+      - key: RESEND_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        value: "Sphere <noreply@spheremusic.space>"
+      - key: SIGNUP_LOG_CODE
+        value: "false"
+
+      # --- Music providers ---
+      - key: SPOTIFY_CLIENT_ID
+        sync: false
+      - key: SPOTIFY_CLIENT_SECRET
+        sync: false
+      - key: SOUNDCLOUD_CLIENT_ID
+        sync: false
+      - key: SOUNDCLOUD_CLIENT_SECRET
+        sync: false
+      - key: VK_SERVICE_TOKEN
+        sync: false
+      - key: YANDEX_SERVICE_TOKEN
+        sync: false
+      - key: GENIUS_TOKEN
+        sync: false

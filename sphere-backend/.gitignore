@@ -16,3 +16,7 @@
 .idea/
 .vscode/
 .DS_Store
+
+# Local Postgres scratch data (used for `make local-pg`-style dev runs)
+/.local_pg.log
+/.local_pgdata/

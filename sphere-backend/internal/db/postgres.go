@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS subscription_requests (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS subscription_requests_target_idx ON subscription_requests(target_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS subscription_requests_target_status_idx ON subscription_requests(target_id, status);
 CREATE INDEX IF NOT EXISTS subscription_requests_requester_idx ON subscription_requests(requester_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS subscription_requests_one_pending_idx
     ON subscription_requests(requester_id, target_id)

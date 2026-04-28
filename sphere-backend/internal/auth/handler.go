@@ -165,15 +165,17 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// reCAPTCHA v3 — optional in dev when RECAPTCHA_SECRET is empty
-	if h.cfg.RecaptchaSecret != "" {
+	// reCAPTCHA v3 — soft check.
+	// The email code (one-time, time-limited, sent to a real inbox) is the primary anti-bot gate
+	// for /auth/register; reCAPTCHA from a hidden WKWebView often scores below the min threshold,
+	// so we log the failure but still let the flow proceed to email-code + password verification.
+	if h.cfg.RecaptchaSecret != "" && strings.TrimSpace(req.RecaptchaToken) != "" {
 		rip := r.RemoteAddr
 		if xf := r.Header.Get("X-Forwarded-For"); xf != "" {
 			rip = strings.TrimSpace(strings.Split(xf, ",")[0])
 		}
 		if err := VerifyRecaptchaV3(r.Context(), h.cfg.RecaptchaSecret, req.RecaptchaToken, rip, h.cfg.RecaptchaMinScore); err != nil {
-			http.Error(w, `{"error":"recaptcha_failed","detail":"`+err.Error()+`"}`, http.StatusBadRequest)
-			return
+			log.Printf("[recaptcha] register soft-fail email=%s err=%v", strings.ToLower(req.Email), err)
 		}
 	}
 

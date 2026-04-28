@@ -1,8 +1,10 @@
 package config
 
 import (
+	"encoding/hex"
 	"fmt"
 	"os"
+	"strings"
 )
 
 type Config struct {
@@ -72,8 +74,23 @@ func Load() (*Config, error) {
 	if cfg.JWTSecret == "" {
 		return nil, fmt.Errorf("JWT_SECRET is required")
 	}
+	if err := validate64HexKey("COMMENT_ENCRYPTION_KEY", cfg.CommentEncryptionKey); err != nil {
+		return nil, err
+	}
+	if err := validate64HexKey("CHAT_MESSAGE_KEY", cfg.ChatMessageKey); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
+}
+
+func validate64HexKey(name, v string) error {
+	s := strings.TrimSpace(v)
+	b, err := hex.DecodeString(s)
+	if err != nil || len(b) != 32 {
+		return fmt.Errorf("%s must be exactly 64 hexadecimal characters (32 bytes)", name)
+	}
+	return nil
 }
 
 func getEnv(key, fallback string) string {

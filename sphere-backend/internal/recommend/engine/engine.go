@@ -270,7 +270,8 @@ func Run(ctx context.Context, d *Deps, userID, lang string) (*model.Recommendati
 		}
 	}
 	if len(albums) < 5 {
-		res := d.Music.Search(ctx, "album hits 2025", 20, "spotify")
+		query := fmt.Sprintf("album hits %d", time.Now().Year())
+		res := d.Music.Search(ctx, query, 20, "spotify")
 		if res != nil {
 			for _, al := range res.Albums {
 				k := al.Provider + ":" + al.ID
