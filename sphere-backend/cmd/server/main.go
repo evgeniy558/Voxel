@@ -31,6 +31,10 @@ import (
 	"sphere-backend/internal/user"
 )
 
+// gitCommit is overridden at build-time via `-ldflags "-X main.gitCommit=<sha>"`.
+// Falls back to the `RENDER_GIT_COMMIT` env var that Render exposes to all builds.
+var gitCommit = ""
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -123,6 +127,21 @@ func main() {
 
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte(`{"status":"ok"}`))
+	})
+
+	// /version exposes the build's git commit (set via -ldflags '-X main.gitCommit=<sha>'
+	// or via the `RENDER_GIT_COMMIT` env var that Render injects automatically).
+	// Useful for verifying which revision is actually running in production.
+	r.Get("/version", func(w http.ResponseWriter, _ *http.Request) {
+		commit := strings.TrimSpace(gitCommit)
+		if commit == "" {
+			commit = strings.TrimSpace(os.Getenv("RENDER_GIT_COMMIT"))
+		}
+		if commit == "" {
+			commit = "unknown"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"commit":"` + commit + `"}`))
 	})
 
 	// Auth (public)
