@@ -103,7 +103,7 @@ func main() {
 	accountH := auth.NewAccountHandler(authSvc, userSvc, uploadSvc, cfg)
 	userH := user.NewHandler(userSvc)
 	musicH := music.NewHandlerWithDB(musicSvc, pool, cfg.GeniusToken)
-	favH := favorites.NewHandler(favSvc)
+	favH := favorites.NewHandlerWithMusic(favSvc, musicSvc)
 	uploadH := uploads.NewHandler(uploadSvc)
 	historyH := history.NewHandler(historySvc)
 	recommendH := recommend.NewHandler(recommendSvc)
@@ -168,6 +168,7 @@ func main() {
 	r.With(middleware.OptionalJWTAuth(cfg.JWTSecret)).Get("/tracks/{provider}/{id}/comments", commentsH.List)
 	r.Get("/lyrics", musicH.GetLyricsByName)
 	r.Get("/artists/{provider}/{id}", musicH.GetArtist)
+	r.Get("/artists/{provider}/{id}/albums", musicH.GetArtistAlbums)
 	r.Get("/artists/unified/{name}", musicH.GetUnifiedArtist)
 	r.Get("/albums/{provider}/{id}", musicH.GetAlbum)
 	r.Get("/playlists/{provider}/{id}", musicH.GetPlaylist)
@@ -214,6 +215,12 @@ func main() {
 		r.Get("/favorites", favH.List)
 		r.Post("/favorites", favH.Add)
 		r.Delete("/favorites/{id}", favH.Delete)
+		r.Get("/playlists/liked", favH.LikedPlaylist)
+
+		// Offline downloads
+		r.Get("/tracks/{provider}/{id}/download", musicH.DownloadTrack)
+		r.Get("/playlists/{provider}/{id}/download-manifest", musicH.PlaylistDownloadManifest)
+		r.Get("/albums/{provider}/{id}/download-manifest", musicH.AlbumDownloadManifest)
 
 		r.Post("/tracks/{provider}/{id}/comments", commentsH.Create)
 		r.Post("/comments/{id}/vote", commentsH.Vote)

@@ -1,5 +1,5 @@
-// Package engine implements Spotify-style recommendations (seeds, audio-features,
-// collaborative and trending signals, Daily Mixes).
+// Package engine implements preference-driven recommendations (artist/genre seeds,
+// related artists, peer-influenced signal, audio-features scoring, Daily Mixes).
 package engine
 
 import (
@@ -58,6 +58,10 @@ func Run(ctx context.Context, d *Deps, userID, lang string) (*model.Recommendati
 		return nil, errors.New("no spotify")
 	}
 	isRU := strings.Contains(strings.ToLower(lang), "ru")
+	market := "US"
+	if isRU {
+		market = "RU"
+	}
 	pref, _ := d.Prefs.Get(ctx, userID)
 
 	var artistNames []string
@@ -103,9 +107,6 @@ func Run(ctx context.Context, d *Deps, userID, lang string) (*model.Recommendati
 		return nil, errors.New("could not resolve artist seeds")
 	}
 
-	seedTrack, _ := d.History.LastSpotifyTrackID(ctx, userID)
-	seedT := strings.TrimSpace(seedTrack)
-
 	seedGenres := make([]string, 0, 16)
 	seenG := map[string]struct{}{}
 	if pref != nil {
@@ -126,77 +127,18 @@ func Run(ctx context.Context, d *Deps, userID, lang string) (*model.Recommendati
 	}
 
 	trackList := make([]model.Track, 0, 120)
-	ai, gi := 0, 0
-	trackUsedInBatch := false
-	for b := 0; b < maxSpotifyRecBatches; b++ {
-		var a, g, st []string
-		rem := 5
-		if b == 0 && seedT != "" && !trackUsedInBatch {
-			st = []string{seedT}
-			rem = 4
-			trackUsedInBatch = true
-			for rem > 0 && ai < len(seedArtists) {
-				if len(a) < 2 {
-					a = append(a, seedArtists[ai])
-					ai++
-					rem--
-					continue
-				}
-				break
-			}
-			for rem > 0 && gi < len(seedGenres) {
-				if len(g) < 2 {
-					g = append(g, seedGenres[gi])
-					gi++
-					rem--
-					continue
-				}
-				break
-			}
-		} else {
-			for rem > 0 && ai < len(seedArtists) {
-				if len(a) < 3 {
-					a = append(a, seedArtists[ai])
-					ai++
-					rem--
-					continue
-				}
-				break
-			}
-			for rem > 0 && gi < len(seedGenres) {
-				if len(g) < 2 {
-					g = append(g, seedGenres[gi])
-					gi++
-					rem--
-					continue
-				}
-				break
-			}
-			for rem > 0 && ai < len(seedArtists) {
-				a = append(a, seedArtists[ai])
-				ai++
-				rem--
-			}
-			for rem > 0 && gi < len(seedGenres) {
-				g = append(g, seedGenres[gi])
-				gi++
-				rem--
-			}
+	// Tracks: preference-driven pool only.
+	// 1) Top tracks for the selected artists.
+	topN := 8
+	if len(seedArtists) < topN {
+		topN = len(seedArtists)
+	}
+	for i := 0; i < topN; i++ {
+		n := 4
+		if i == 0 {
+			n = 6
 		}
-		if len(a)+len(g)+len(st) == 0 {
-			break
-		}
-		part, err := d.Spotify.GetRecommendations(ctx, a, st, g, 25)
-		if err != nil {
-			if b == 0 {
-				return nil, err
-			}
-			break
-		}
-		trackList = append(trackList, part...)
-		if ai >= len(seedArtists) && gi >= len(seedGenres) {
-			break
-		}
+		appendArtistTop(ctx, d.Spotify, &trackList, seedArtists[i], market, n)
 	}
 
 	// Related: take top tracks from a few related artists per seed (capped to limit Spotify calls).
@@ -210,29 +152,36 @@ func Run(ctx context.Context, d *Deps, userID, lang string) (*model.Recommendati
 				if i >= 4 {
 					break
 				}
-				appendArtistTop(ctx, d.Spotify, &trackList, a.ID, 2)
+				appendArtistTop(ctx, d.Spotify, &trackList, a.ID, market, 2)
 			}
 		}
 	}
 
-	topN := 5
-	if len(seedArtists) < topN {
-		topN = len(seedArtists)
-	}
-	for i := 0; i < topN; i++ {
-		n := 4
-		if i == 0 {
-			n = 5
+	// 2) Genre fill via search (fallback to ensure variety; still preference-driven).
+	for _, g := range seedGenres {
+		if strings.TrimSpace(g) == "" {
+			continue
 		}
-		appendArtistTop(ctx, d.Spotify, &trackList, seedArtists[i], n)
+		// We intentionally avoid global "hits/trending" queries here.
+		if res := d.Music.Search(ctx, g, 8, "spotify"); res != nil {
+			for _, t := range res.Tracks {
+				if t.CoverURL == "" {
+					continue
+				}
+				trackList = append(trackList, t)
+				if len(trackList) >= 140 {
+					break
+				}
+			}
+		}
+		if len(trackList) >= 140 {
+			break
+		}
 	}
 
-	// Collaborative & trending
+	// Collaborative (peer-influenced only; no global trending).
 	if peers, err := d.History.PeerInfluencedTracks(ctx, userID, 15); err == nil {
 		trackList = appendKeys(ctx, d.Music, trackList, peers)
-	}
-	if trends, err := d.History.TrendingTracks(ctx, 15); err == nil {
-		trackList = appendKeys(ctx, d.Music, trackList, trends)
 	}
 
 	trackList = uniqueTracks(trackList)
@@ -270,9 +219,18 @@ func Run(ctx context.Context, d *Deps, userID, lang string) (*model.Recommendati
 		}
 	}
 	if len(albums) < 5 {
-		query := fmt.Sprintf("album hits %d", time.Now().Year())
-		res := d.Music.Search(ctx, query, 20, "spotify")
-		if res != nil {
+		for _, g := range seedGenres {
+			if len(albums) >= 15 {
+				break
+			}
+			g = strings.TrimSpace(g)
+			if g == "" {
+				continue
+			}
+			res := d.Music.Search(ctx, g+" album", 6, "spotify")
+			if res == nil {
+				continue
+			}
 			for _, al := range res.Albums {
 				k := al.Provider + ":" + al.ID
 				if _, ok := albumSeen[k]; ok {
@@ -353,8 +311,11 @@ func Run(ctx context.Context, d *Deps, userID, lang string) (*model.Recommendati
 	}, nil
 }
 
-func appendArtistTop(ctx context.Context, sp *provider.Spotify, out *[]model.Track, artistID string, n int) []model.Track {
-	top, err := sp.GetArtistTopTracks(ctx, artistID, "US")
+func appendArtistTop(ctx context.Context, sp *provider.Spotify, out *[]model.Track, artistID, market string, n int) []model.Track {
+	if market == "" {
+		market = "US"
+	}
+	top, err := sp.GetArtistTopTracks(ctx, artistID, market)
 	if err != nil {
 		return *out
 	}

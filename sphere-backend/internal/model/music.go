@@ -24,6 +24,7 @@ type Artist struct {
 	Followers        int64    `json:"followers,omitempty"`
 	Genres           []string `json:"genres,omitempty"`
 	Tracks           []Track  `json:"tracks,omitempty"`
+	Albums           []Album  `json:"albums,omitempty"`
 }
 
 type Album struct {

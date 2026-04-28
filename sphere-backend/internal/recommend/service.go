@@ -57,129 +57,32 @@ func NewService(h *history.Service, m *music.Service, p *preferences.Service, sp
 }
 
 func (s *Service) GetRecommendations(ctx context.Context, userID, lang string) *Response {
-	// Run legacy + engine in parallel so cold Render + slow Spotify don't block
-	// the search-based feed (on sleepy hosts, one path often wins).
-	var (
-		legacy *Response
-		eng    *model.RecommendationFeed
-		engErr error
-		wg     sync.WaitGroup
-		deps   = engine.Deps{Spotify: s.spotify, Music: s.music, History: s.history, Prefs: s.prefs}
-		userOK = strings.TrimSpace(userID) != "" && s.spotify != nil
-	)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		legacy = s.legacyGetRecommendations(ctx, userID, lang)
-	}()
-	if userOK {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			eng, engErr = engine.Run(ctx, &deps, userID, lang)
-		}()
-	}
-	wg.Wait()
-
+	legacy := s.legacyGetRecommendations(ctx, userID, lang)
 	if legacy == nil {
 		legacy = &Response{Tracks: []model.Track{}, Albums: []model.Album{}, Artists: []model.Artist{}}
 	}
-	if engErr != nil {
-		log.Printf("[recommend] engine.Run failed user=%s: %v", userID, engErr)
-	}
-	if !userOK || engErr != nil || eng == nil || len(eng.Tracks) == 0 {
-		return legacy
-	}
-	merged := mergeRecommendationFeeds(eng, legacy)
-	if len(merged.Tracks) == 0 && (len(legacy.Tracks) > 0 || len(legacy.Albums) > 0 || len(legacy.Artists) > 0) {
-		return legacy
-	}
-	if len(merged.Tracks) == 0 {
-		return legacy
-	}
-	return merged
-}
 
-// merge puts engine rows first, then fills from legacy; dedupes by provider:id.
-func mergeRecommendationFeeds(engine *model.RecommendationFeed, legacy *Response) *Response {
-	out := &Response{
-		Tracks:  make([]model.Track, 0, 32),
-		Albums:  make([]model.Album, 0, 20),
-		Artists: make([]model.Artist, 0, 20),
+	userOK := strings.TrimSpace(userID) != "" && s.spotify != nil
+	if !userOK {
+		return legacy
 	}
-	seenT := make(map[string]struct{})
-	addT := func(t model.Track) {
-		if t.ID == "" {
-			return
-		}
-		k := t.Provider + ":" + t.ID
-		if _, ok := seenT[k]; ok {
-			return
-		}
-		seenT[k] = struct{}{}
-		out.Tracks = append(out.Tracks, t)
+
+	// Cold-start: if user hasn't completed onboarding and has no listening history,
+	// the search-based feed looks better than sparse preference-driven recs.
+	pref, _ := s.prefs.Get(ctx, userID)
+	isOnboarded := pref != nil && pref.OnboardingCompleted && (len(pref.SelectedArtists) > 0 || len(pref.SelectedGenres) > 0)
+	hist, _ := s.history.List(ctx, userID, 1)
+	hasHistory := len(hist) > 0
+	if !isOnboarded && !hasHistory {
+		return legacy
 	}
-	for _, t := range engine.Tracks {
-		if len(out.Tracks) >= 30 {
-			break
-		}
-		addT(t)
+
+	deps := engine.Deps{Spotify: s.spotify, Music: s.music, History: s.history, Prefs: s.prefs}
+	eng, err := engine.Run(ctx, &deps, userID, lang)
+	if err != nil || eng == nil || len(eng.Tracks) == 0 {
+		return legacy
 	}
-	if legacy != nil {
-		for _, t := range legacy.Tracks {
-			if len(out.Tracks) >= 30 {
-				break
-			}
-			addT(t)
-		}
-	}
-	seenA := make(map[string]struct{})
-	addAl := func(a model.Album) {
-		k := a.Provider + ":" + a.ID
-		if _, ok := seenA[k]; ok {
-			return
-		}
-		seenA[k] = struct{}{}
-		out.Albums = append(out.Albums, a)
-	}
-	for _, a := range engine.Albums {
-		if len(out.Albums) >= 15 {
-			break
-		}
-		addAl(a)
-	}
-	if legacy != nil {
-		for _, a := range legacy.Albums {
-			if len(out.Albums) >= 15 {
-				break
-			}
-			addAl(a)
-		}
-	}
-	seenAr := make(map[string]struct{})
-	addAr := func(a model.Artist) {
-		k := a.Provider + ":" + a.ID
-		if _, ok := seenAr[k]; ok {
-			return
-		}
-		seenAr[k] = struct{}{}
-		out.Artists = append(out.Artists, a)
-	}
-	for _, a := range engine.Artists {
-		if len(out.Artists) >= 15 {
-			break
-		}
-		addAr(a)
-	}
-	if legacy != nil {
-		for _, a := range legacy.Artists {
-			if len(out.Artists) >= 15 {
-				break
-			}
-			addAr(a)
-		}
-	}
-	return out
+	return eng
 }
 
 // GetDailyMixes returns four personalized track bundles.

@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"sphere-backend/internal/middleware"
+	"sphere-backend/internal/model"
 	"sphere-backend/internal/provider"
 )
 
@@ -201,6 +203,27 @@ func (h *Handler) GetArtist(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(artist)
 }
 
+func (h *Handler) GetArtistAlbums(w http.ResponseWriter, r *http.Request) {
+	prov := chi.URLParam(r, "provider")
+	id := chi.URLParam(r, "id")
+
+	lang := strings.ToLower(r.Header.Get("Accept-Language"))
+	market := "US"
+	if strings.Contains(lang, "ru") {
+		market = "RU"
+	}
+	albums, err := h.svc.GetArtistAlbums(r.Context(), prov, id, market, 50)
+	if err != nil {
+		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusNotFound)
+		return
+	}
+	if albums == nil {
+		albums = []model.Album{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"albums": albums})
+}
+
 // GetUnifiedArtist merges artist profiles from all providers by name.
 func (h *Handler) GetUnifiedArtist(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
@@ -263,6 +286,154 @@ func (h *Handler) GetPlaylist(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(playlist)
+}
+
+type downloadManifestItem struct {
+	Provider    string `json:"provider"`
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Artist      string `json:"artist"`
+	CoverURL    string `json:"cover_url,omitempty"`
+	DownloadURL string `json:"download_url"`
+}
+
+func (h *Handler) PlaylistDownloadManifest(w http.ResponseWriter, r *http.Request) {
+	prov := chi.URLParam(r, "provider")
+	id := chi.URLParam(r, "id")
+
+	pl, err := h.svc.GetPlaylist(r.Context(), prov, id)
+	if err != nil || pl == nil {
+		http.Error(w, `{"error":"`+fmt.Sprintf("playlist not found: %v", err)+`"}`, http.StatusNotFound)
+		return
+	}
+
+	items := make([]downloadManifestItem, 0, len(pl.Tracks))
+	for _, t := range pl.Tracks {
+		if t.Provider == "" || t.ID == "" {
+			continue
+		}
+		items = append(items, downloadManifestItem{
+			Provider:    t.Provider,
+			ID:          t.ID,
+			Title:       t.Title,
+			Artist:      t.Artist,
+			CoverURL:    t.CoverURL,
+			DownloadURL: "/tracks/" + t.Provider + "/" + t.ID + "/download",
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"tracks": items})
+}
+
+func (h *Handler) AlbumDownloadManifest(w http.ResponseWriter, r *http.Request) {
+	prov := chi.URLParam(r, "provider")
+	id := chi.URLParam(r, "id")
+
+	al, err := h.svc.GetAlbum(r.Context(), prov, id)
+	if err != nil || al == nil {
+		http.Error(w, `{"error":"`+fmt.Sprintf("album not found: %v", err)+`"}`, http.StatusNotFound)
+		return
+	}
+
+	items := make([]downloadManifestItem, 0, len(al.Tracks))
+	for _, t := range al.Tracks {
+		if t.Provider == "" || t.ID == "" {
+			continue
+		}
+		cover := t.CoverURL
+		if cover == "" {
+			cover = al.CoverURL
+		}
+		items = append(items, downloadManifestItem{
+			Provider:    t.Provider,
+			ID:          t.ID,
+			Title:       t.Title,
+			Artist:      t.Artist,
+			CoverURL:    cover,
+			DownloadURL: "/tracks/" + t.Provider + "/" + t.ID + "/download",
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"tracks": items})
+}
+
+func sanitizeFilenamePart(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	s = strings.ReplaceAll(s, "/", "-")
+	s = strings.ReplaceAll(s, "\\", "-")
+	s = strings.ReplaceAll(s, "\"", "'")
+	return s
+}
+
+func (h *Handler) DownloadTrack(w http.ResponseWriter, r *http.Request) {
+	prov := chi.URLParam(r, "provider")
+	id := chi.URLParam(r, "id")
+
+	streamURL, err := h.svc.GetTrackStreamURL(r.Context(), prov, id)
+	if err != nil || strings.TrimSpace(streamURL) == "" {
+		// Spotify only provides previews; if we can't resolve anything, downloading is unavailable.
+		if prov == "spotify" {
+			http.Error(w, `{"error":"download_not_available"}`, http.StatusConflict)
+			return
+		}
+		http.Error(w, `{"error":"stream not available"}`, http.StatusNotFound)
+		return
+	}
+
+	meta, _ := h.svc.GetTrack(r.Context(), prov, id)
+	base := "track"
+	if meta != nil {
+		a := sanitizeFilenamePart(meta.Artist)
+		t := sanitizeFilenamePart(meta.Title)
+		if a != "" && t != "" {
+			base = a + " - " + t
+		} else if t != "" {
+			base = t
+		}
+	}
+
+	w.Header().Set("Content-Type", "audio/mpeg")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+base+`.mp3"`)
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+
+	cmd := exec.CommandContext(
+		r.Context(),
+		"ffmpeg",
+		"-hide_banner",
+		"-loglevel", "error",
+		"-i", streamURL,
+		"-vn",
+		"-c:a", "libmp3lame",
+		"-b:a", "192k",
+		"-f", "mp3",
+		"pipe:1",
+	)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		http.Error(w, `{"error":"ffmpeg failed"}`, http.StatusInternalServerError)
+		return
+	}
+	stderr, _ := cmd.StderrPipe()
+	if err := cmd.Start(); err != nil {
+		http.Error(w, `{"error":"ffmpeg failed"}`, http.StatusInternalServerError)
+		return
+	}
+
+	_, copyErr := io.Copy(w, stdout)
+	_ = stdout.Close()
+	_ = cmd.Wait()
+	if copyErr != nil {
+		// Best-effort: dump ffmpeg stderr to logs for debugging.
+		if stderr != nil {
+			b, _ := io.ReadAll(stderr)
+			if len(b) > 0 {
+				log.Printf("[download] ffmpeg copy error: %v stderr=%s", copyErr, string(b))
+			}
+		}
+	}
 }
 
 func (h *Handler) ProxyStreamHQ(w http.ResponseWriter, r *http.Request) {

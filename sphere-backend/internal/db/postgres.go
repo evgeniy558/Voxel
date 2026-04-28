@@ -49,8 +49,18 @@ CREATE TABLE IF NOT EXISTS favorites (
     cover_url TEXT NOT NULL DEFAULT '',
     metadata JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE(user_id, provider, provider_item_id)
+    UNIQUE(user_id, item_type, provider, provider_item_id)
 );
+
+-- favorites: enforce allowed item types + upgrade unique key
+ALTER TABLE favorites
+    ADD CONSTRAINT IF NOT EXISTS favorites_item_type_check
+    CHECK (item_type IN ('track','album','playlist','artist'));
+ALTER TABLE favorites DROP CONSTRAINT IF EXISTS favorites_user_id_provider_provider_item_id_key;
+ALTER TABLE favorites
+    ADD CONSTRAINT IF NOT EXISTS favorites_user_item_unique
+    UNIQUE (user_id, item_type, provider, provider_item_id);
+CREATE INDEX IF NOT EXISTS favorites_user_type_time_idx ON favorites(user_id, item_type, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS uploads (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

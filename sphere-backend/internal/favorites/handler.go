@@ -3,23 +3,35 @@ package favorites
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
 	"sphere-backend/internal/middleware"
+	"sphere-backend/internal/model"
+	"sphere-backend/internal/music"
 )
 
 type Handler struct {
-	svc *Service
+	svc   *Service
+	music *music.Service
 }
 
 func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
 
+func NewHandlerWithMusic(svc *Service, musicSvc *music.Service) *Handler {
+	return &Handler{svc: svc, music: musicSvc}
+}
+
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r.Context())
-	itemType := r.URL.Query().Get("type")
+	itemType := r.URL.Query().Get("item_type")
+	if itemType == "" {
+		// Backward compatibility with older clients.
+		itemType = r.URL.Query().Get("type")
+	}
 
 	favs, err := h.svc.List(r.Context(), userID, itemType)
 	if err != nil {
@@ -74,4 +86,55 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// LikedPlaylist returns a virtual playlist that lists the user's liked (favorite) tracks.
+func (h *Handler) LikedPlaylist(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	if h.music == nil {
+		http.Error(w, `{"error":"music service not configured"}`, http.StatusInternalServerError)
+		return
+	}
+
+	lang := strings.ToLower(r.Header.Get("Accept-Language"))
+	title := "Liked"
+	if strings.Contains(lang, "ru") {
+		title = "Мне нравится"
+	}
+
+	favs, err := h.svc.List(r.Context(), userID, "track")
+	if err != nil {
+		http.Error(w, `{"error":"failed to list favorites"}`, http.StatusInternalServerError)
+		return
+	}
+
+	tracks := make([]model.Track, 0, len(favs))
+	for _, f := range favs {
+		if strings.TrimSpace(f.Provider) == "" || strings.TrimSpace(f.ProviderItemID) == "" {
+			continue
+		}
+		tr, err := h.music.GetTrack(r.Context(), f.Provider, f.ProviderItemID)
+		if err != nil || tr == nil {
+			continue
+		}
+		tracks = append(tracks, *tr)
+		if len(tracks) >= 800 {
+			break
+		}
+	}
+
+	cover := ""
+	if len(tracks) > 0 {
+		cover = tracks[0].CoverURL
+	}
+	pl := model.Playlist{
+		ID:       "liked",
+		Provider: "sphere",
+		Title:    title,
+		CoverURL: cover,
+		Tracks:   tracks,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(pl)
 }

@@ -132,6 +132,22 @@ func (s *Service) GetArtist(ctx context.Context, providerName, id string) (*mode
 	return s.providers[providerName].GetArtist(ctx, id)
 }
 
+type artistAlbumsProvider interface {
+	GetArtistAlbums(ctx context.Context, artistID, market string, limit int) ([]model.Album, error)
+}
+
+func (s *Service) GetArtistAlbums(ctx context.Context, providerName, artistID, market string, limit int) ([]model.Album, error) {
+	p, ok := s.providers[providerName]
+	if !ok {
+		return nil, fmt.Errorf("unknown provider: %s", providerName)
+	}
+	ap, ok := p.(artistAlbumsProvider)
+	if !ok {
+		return nil, fmt.Errorf("artist albums not supported for provider: %s", providerName)
+	}
+	return ap.GetArtistAlbums(ctx, artistID, market, limit)
+}
+
 // GetUnifiedArtist builds a merged artist profile:
 //   - canonical metadata (image, followers, genres) comes from Spotify when available
 //   - top tracks from Spotify are included

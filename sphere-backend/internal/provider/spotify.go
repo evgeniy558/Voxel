@@ -5,8 +5,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +24,13 @@ type Spotify struct {
 	tokenExpiry  time.Time
 	mu           sync.Mutex
 	httpClient   *http.Client
+
+	monthlyListenersCache sync.Map // map[string]spotifyMonthlyListenersCacheEntry
+}
+
+type spotifyMonthlyListenersCacheEntry struct {
+	Listeners int64
+	ExpiresAt time.Time
 }
 
 func NewSpotify(clientID, clientSecret string) *Spotify {
@@ -171,21 +181,142 @@ func (s *Spotify) GetArtist(ctx context.Context, id string) (*model.Artist, erro
 	}
 	artist := a.toArtist()
 
-	topResp, err := s.apiGet(ctx, "/artists/"+id+"/top-tracks?market=US")
-	if err == nil {
+	// Enrichment (best-effort): top tracks, albums (discography), monthly listeners.
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		topResp, err := s.apiGet(ctx, "/artists/"+id+"/top-tracks?market=US")
+		if err != nil {
+			return
+		}
 		defer topResp.Body.Close()
 		var top struct {
 			Tracks []spotifyTrack `json:"tracks"`
 		}
-		if json.NewDecoder(topResp.Body).Decode(&top) == nil {
-			for _, t := range top.Tracks {
-				tr := t.toTrack()
-				tr.Genres = artist.Genres
-				artist.Tracks = append(artist.Tracks, tr)
-			}
+		if json.NewDecoder(topResp.Body).Decode(&top) != nil {
+			return
+		}
+		for _, t := range top.Tracks {
+			tr := t.toTrack()
+			tr.Genres = artist.Genres
+			artist.Tracks = append(artist.Tracks, tr)
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if ml, err := s.GetArtistMonthlyListeners(ctx, id); err == nil && ml > 0 {
+			artist.MonthlyListeners = ml
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		al, err := s.GetArtistAlbums(ctx, id, "US", 20)
+		if err != nil {
+			return
+		}
+		if len(al) > 5 {
+			al = al[:5]
+		}
+		artist.Albums = al
+	}()
+
+	wg.Wait()
+	return &artist, nil
+}
+
+var spotifyMonthlyListenersRe = regexp.MustCompile(`monthlyListeners\"\\s*:\\s*([0-9]+)`)
+
+// GetArtistMonthlyListeners scrapes open.spotify.com embedded JSON for monthlyListeners.
+// This is unofficial, so it is best-effort with caching and safe fallback.
+func (s *Spotify) GetArtistMonthlyListeners(ctx context.Context, artistID string) (int64, error) {
+	if strings.TrimSpace(artistID) == "" {
+		return 0, fmt.Errorf("empty artist id")
+	}
+	if v, ok := s.monthlyListenersCache.Load(artistID); ok {
+		if e, ok2 := v.(spotifyMonthlyListenersCacheEntry); ok2 && time.Now().Before(e.ExpiresAt) {
+			return e.Listeners, nil
 		}
 	}
-	return &artist, nil
+
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://open.spotify.com/artist/"+url.PathEscape(artistID), nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("open.spotify.com status %d", resp.StatusCode)
+	}
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, err
+	}
+	m := spotifyMonthlyListenersRe.FindSubmatch(b)
+	if len(m) < 2 {
+		// Cache the miss briefly to avoid hammering.
+		s.monthlyListenersCache.Store(artistID, spotifyMonthlyListenersCacheEntry{Listeners: 0, ExpiresAt: time.Now().Add(15 * time.Minute)})
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(string(m[1]), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	s.monthlyListenersCache.Store(artistID, spotifyMonthlyListenersCacheEntry{Listeners: n, ExpiresAt: time.Now().Add(1 * time.Hour)})
+	return n, nil
+}
+
+// GetArtistAlbums returns a simple discography list (no tracks) for a Spotify artist.
+func (s *Spotify) GetArtistAlbums(ctx context.Context, artistID, market string, limit int) ([]model.Album, error) {
+	if strings.TrimSpace(artistID) == "" {
+		return nil, fmt.Errorf("empty artist id")
+	}
+	if market == "" {
+		market = "US"
+	}
+	if limit <= 0 || limit > 50 {
+		limit = 50
+	}
+	path := fmt.Sprintf("/artists/%s/albums?include_groups=album,single&limit=%d&market=%s",
+		url.PathEscape(artistID),
+		limit,
+		url.QueryEscape(market),
+	)
+	resp, err := s.apiGet(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var r struct {
+		Items []spotifyAlbum `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{})
+	out := make([]model.Album, 0, len(r.Items))
+	for _, it := range r.Items {
+		al := it.toAlbum()
+		if al.ID == "" {
+			continue
+		}
+		k := al.Provider + ":" + al.ID
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, al)
+	}
+	return out, nil
 }
 
 func (s *Spotify) GetAlbum(ctx context.Context, id string) (*model.Album, error) {
