@@ -23,18 +23,24 @@ private final class ItemContainerView: UIView {
     }
 }
 
-/// Порт таббара из Telegram-iOS для iOS 18 и ниже: та же структура (LiquidLens), серые иконки снаружи, капля с блюром, внутри капли — акцентные иконки.
-public final class TelegramTabBarView: UIView {
+/// Custom tab bar with liquid lens effect for iOS 18 and below.
+public final class SphereTabBarView: UIView {
 
     public struct Item: Equatable {
         let id: Int
         let title: String
         let imageName: String
+        let avatarImage: UIImage?
 
-        public init(id: Int, title: String, imageName: String) {
+        public init(id: Int, title: String, imageName: String, avatarImage: UIImage? = nil) {
             self.id = id
             self.title = title
             self.imageName = imageName
+            self.avatarImage = avatarImage
+        }
+
+        public static func == (lhs: Item, rhs: Item) -> Bool {
+            lhs.id == rhs.id && lhs.title == rhs.title && lhs.imageName == rhs.imageName
         }
     }
 
@@ -49,6 +55,12 @@ public final class TelegramTabBarView: UIView {
     private var isDark: Bool = false
 
     public var onSelect: ((Int) -> Void)?
+    /// Вызов после 5 тапов по вкладке настроек (id == 2).
+    public var onSettingsFiveTaps: (() -> Void)?
+
+    private var settingsTapCount: Int = 0
+    private var settingsTapStartTime: CFTimeInterval = 0
+    private static let settingsFiveTapWindow: CFTimeInterval = 2.0
 
     private let backgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
     private let contentView = UIView()
@@ -58,6 +70,7 @@ public final class TelegramTabBarView: UIView {
     private var itemViews: [Int: UIView] = [:]
     private var selectedItemViews: [Int: UIView] = [:]
     private let tabSelectionRecognizer: TabSelectionRecognizer
+    private let tapRecognizer: UITapGestureRecognizer
 
     private var selectionGestureState: (startX: CGFloat, currentX: CGFloat, itemId: Int)?
     private var overrideSelectedId: Int?
@@ -69,6 +82,7 @@ public final class TelegramTabBarView: UIView {
         let blurEffect = UIBlurEffect(style: .systemUltraThinMaterial)
         blurLensView = UIVisualEffectView(effect: blurEffect)
         tabSelectionRecognizer = TabSelectionRecognizer(target: nil, action: nil)
+        tapRecognizer = UITapGestureRecognizer(target: nil, action: nil)
         super.init(frame: frame)
         setup()
     }
@@ -77,6 +91,7 @@ public final class TelegramTabBarView: UIView {
         let blurEffect = UIBlurEffect(style: .systemUltraThinMaterial)
         blurLensView = UIVisualEffectView(effect: blurEffect)
         tabSelectionRecognizer = TabSelectionRecognizer(target: nil, action: nil)
+        tapRecognizer = UITapGestureRecognizer(target: nil, action: nil)
         super.init(coder: coder)
         setup()
     }
@@ -101,16 +116,25 @@ public final class TelegramTabBarView: UIView {
         tabSelectionRecognizer.addTarget(self, action: #selector(onTabSelectionGesture(_:)))
         addGestureRecognizer(tabSelectionRecognizer)
 
-        let tap = UITapGestureRecognizer(target: self, action: #selector(onTap(_:)))
-        addGestureRecognizer(tap)
+        tapRecognizer.addTarget(self, action: #selector(onTap(_:)))
+        tapRecognizer.delegate = self
+        addGestureRecognizer(tapRecognizer)
     }
 
     public func configure(items: [Item], selectedId: Int, accentColor: UIColor, isDark: Bool) {
+        let countChanged = self.items.count != items.count
+        let avatarChanged = zip(self.items, items).contains { $0.avatarImage !== $1.avatarImage }
         self.items = items
         self.selectedId = selectedId
         self.overrideSelectedId = nil
         self.accentColor = accentColor
         self.isDark = isDark
+        if countChanged || avatarChanged {
+            itemViews.values.forEach { $0.removeFromSuperview() }
+            selectedItemViews.values.forEach { $0.removeFromSuperview() }
+            itemViews.removeAll()
+            selectedItemViews.removeAll()
+        }
         setNeedsLayout()
         layoutIfNeeded()
     }
@@ -215,12 +239,12 @@ public final class TelegramTabBarView: UIView {
             if let existing = itemViews[item.id] {
                 grayView = existing
             } else {
-                grayView = makeItemView(title: item.title, imageName: item.imageName, isAccent: false, iconScale: 1)
+                grayView = makeItemView(title: item.title, imageName: item.imageName, isAccent: false, iconScale: 1, avatarImage: item.avatarImage)
                 contentView.addSubview(grayView)
                 itemViews[item.id] = grayView
             }
             grayView.frame = itemFrame
-            if let c = grayView as? ItemContainerView {
+            if let c = grayView as? ItemContainerView, item.avatarImage == nil {
                 (c.iconView as? UIImageView)?.tintColor = UIColor.label.withAlphaComponent(0.65)
                 c.titleLabel?.textColor = UIColor.label.withAlphaComponent(0.65)
             }
@@ -229,7 +253,7 @@ public final class TelegramTabBarView: UIView {
             if let existing = selectedItemViews[item.id] {
                 accentView = existing
             } else {
-                accentView = makeItemView(title: item.title, imageName: item.imageName, isAccent: true, iconScale: 1)
+                accentView = makeItemView(title: item.title, imageName: item.imageName, isAccent: true, iconScale: 1, avatarImage: item.avatarImage)
                 selectedContentView.addSubview(accentView)
                 selectedItemViews[item.id] = accentView
             }
@@ -258,20 +282,37 @@ public final class TelegramTabBarView: UIView {
         wasPressedOrDragging = isDragging
     }
 
-    private func makeItemView(title: String, imageName: String, isAccent: Bool, iconScale: CGFloat = 1) -> UIView {
+    private func makeItemView(title: String, imageName: String, isAccent: Bool, iconScale: CGFloat = 1, avatarImage: UIImage? = nil) -> UIView {
         let container = ItemContainerView()
         container.iconScale = iconScale
         container.iconBaseSize = 28
         let pointSize: CGFloat = 24 * iconScale
         let imageView: UIImageView
-        if let customImage = UIImage(named: imageName)?.withRenderingMode(.alwaysTemplate) {
+        if let avatar = avatarImage {
+            let size: CGFloat = 28
+            UIGraphicsBeginImageContextWithOptions(CGSize(width: size, height: size), false, 0)
+            let rect = CGRect(x: 0, y: 0, width: size, height: size)
+            UIBezierPath(ovalIn: rect).addClip()
+            avatar.draw(in: rect)
+            let circleAvatar = UIGraphicsGetImageFromCurrentImageContext()?.withRenderingMode(.alwaysOriginal)
+            UIGraphicsEndImageContext()
+            imageView = UIImageView(image: circleAvatar)
+            imageView.layer.cornerRadius = size / 2
+            imageView.clipsToBounds = true
+            if isAccent {
+                imageView.layer.borderWidth = 2
+                imageView.layer.borderColor = accentColor.cgColor
+            }
+        } else if let customImage = UIImage(named: imageName)?.withRenderingMode(.alwaysTemplate) {
             imageView = UIImageView(image: customImage)
         } else {
             let config = UIImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold)
             imageView = UIImageView(image: UIImage(systemName: imageName, withConfiguration: config))
         }
         imageView.contentMode = .scaleAspectFit
-        imageView.tintColor = isAccent ? accentColor : UIColor.label.withAlphaComponent(0.65)
+        if avatarImage == nil {
+            imageView.tintColor = isAccent ? accentColor : UIColor.label.withAlphaComponent(0.65)
+        }
         container.addSubview(imageView)
 
         let label = UILabel()
@@ -310,7 +351,14 @@ public final class TelegramTabBarView: UIView {
                 closest = (id, dist)
             }
         }
-        return closest?.id
+        if let id = closest?.id { return id }
+        // Fallback на iOS 16: itemViews могут ещё не быть разложены — считаем вкладку по X в координатах contentView.
+        guard !items.isEmpty else { return nil }
+        let itemWidth = floor((contentView.bounds.width - innerInset * 2) / CGFloat(max(1, items.count)))
+        guard itemWidth > 0 else { return items[0].id }
+        let localX = pContent.x - innerInset
+        let idx = max(0, min(items.count - 1, Int(localX / itemWidth)))
+        return items[idx].id
     }
 
     /// Вкладка под центром капли по lensX — чтобы масштаб иконки совпадал с каплей при драге.
@@ -330,8 +378,27 @@ public final class TelegramTabBarView: UIView {
     @objc private func onTap(_ recognizer: UITapGestureRecognizer) {
         guard recognizer.state == .ended else { return }
         let p = recognizer.location(in: self)
-        guard let id = item(at: p), id != selectedId else { return }
-        onSelect?(id)
+        guard let id = item(at: p) else { return }
+        let settingsTabId = 2
+        if id == settingsTabId {
+            let now = CACurrentMediaTime()
+            if settingsTapCount == 0 { settingsTapStartTime = now }
+            settingsTapCount += 1
+            if settingsTapCount >= 5 {
+                if now - settingsTapStartTime <= Self.settingsFiveTapWindow {
+                    onSettingsFiveTaps?()
+                }
+                settingsTapCount = 0
+            } else if now - settingsTapStartTime > Self.settingsFiveTapWindow {
+                settingsTapCount = 1
+                settingsTapStartTime = now
+            }
+        } else {
+            settingsTapCount = 0
+        }
+        if id != selectedId {
+            onSelect?(id)
+        }
     }
 
     @objc private func onTabSelectionGesture(_ recognizer: TabSelectionRecognizer) {
@@ -339,7 +406,8 @@ public final class TelegramTabBarView: UIView {
         case .began:
             let loc = recognizer.location(in: self)
             if let id = item(at: loc) {
-                let startX = lensXForItem(id: id)
+                // Старт от текущей позиции капли — капля не прыгает и сразу ведётся за пальцем при движении.
+                let startX = lensXForItem(id: selectedId)
                 selectionGestureState = (startX, startX, id)
                 setNeedsLayout()
                 layoutIfNeeded()
@@ -357,16 +425,23 @@ public final class TelegramTabBarView: UIView {
             }
         case .ended, .cancelled:
             if let state = selectionGestureState {
-                selectionGestureState = nil
                 if recognizer.state == .ended {
                     overrideSelectedId = state.itemId
                     onSelect?(state.itemId)
                 }
+                selectionGestureState = nil
                 setNeedsLayout()
                 layoutIfNeeded()
             }
         default:
             break
         }
+    }
+}
+
+extension SphereTabBarView: UIGestureRecognizerDelegate {
+    public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        // Тап должен срабатывать вместе с жестом капли (TabSelectionRecognizer), иначе на iOS 16 тап по вкладке может не доходить до onTap.
+        true
     }
 }

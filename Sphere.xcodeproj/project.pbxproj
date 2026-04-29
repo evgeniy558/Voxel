@@ -6,9 +6,68 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		7A79EC1B2F543B2D009062F6 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 7A79EC192F543B2D009062F6 /* GoogleSignIn */; };
+		7A79EC1C2F543B2D009062F6 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 7A79EC1A2F543B2D009062F6 /* Supabase */; };
+		7A79EC1F2F543B2D009062F6 /* ExyteChat in Frameworks */ = {isa = PBXBuildFile; productRef = 7A79EC1E2F543B2D009062F6 /* ExyteChat */; };
+		7A79EC212F543B2D009062F6 /* SphereWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 7A79EC202F543B2D009062F6 /* SphereWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		B2SH002F543B2E009062F6 /* SphereShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B2SH001F543B2E009062F6 /* SphereShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		7A79EC262F543B2D009062F6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7A79EC012F543B2D009062F6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7A79EC242F543B2D009062F6;
+			remoteInfo = SphereWidget;
+		};
+		B2SH003F543B2E009062F6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7A79EC012F543B2D009062F6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B2SH005F543B2E009062F6;
+			remoteInfo = SphereShareExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		7A79EC232F543B2D009062F6 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				7A79EC212F543B2D009062F6 /* SphereWidget.appex in Embed Foundation Extensions */,
+				B2SH002F543B2E009062F6 /* SphereShareExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		7A79EC092F543B2D009062F6 /* Sphere.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Sphere.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7A79EC202F543B2D009062F6 /* SphereWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SphereWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B2SH001F543B2E009062F6 /* SphereShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SphereShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		7A79EC2D2F543B2D009062F6 /* Exceptions for "SphereWidget" folder in "SphereWidget" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 7A79EC242F543B2D009062F6 /* SphereWidget */;
+		};
+		B2SH00DF543B2E009062F6 /* Exceptions for "SphereShare" folder in "SphereShareExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = B2SH005F543B2E009062F6 /* SphereShareExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		7A79EC0B2F543B2D009062F6 /* Sphere */ = {
@@ -16,10 +75,43 @@
 			path = Sphere;
 			sourceTree = "<group>";
 		};
+		7A79EC222F543B2D009062F6 /* SphereWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7A79EC2D2F543B2D009062F6 /* Exceptions for "SphereWidget" folder in "SphereWidget" target */,
+			);
+			path = SphereWidget;
+			sourceTree = "<group>";
+		};
+		B2SH00CF543B2E009062F6 /* SphereShare */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B2SH00DF543B2E009062F6 /* Exceptions for "SphereShare" folder in "SphereShareExtension" target */,
+			);
+			path = SphereShare;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		7A79EC062F543B2D009062F6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7A79EC1B2F543B2D009062F6 /* GoogleSignIn in Frameworks */,
+				7A79EC1C2F543B2D009062F6 /* Supabase in Frameworks */,
+				7A79EC1F2F543B2D009062F6 /* ExyteChat in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7A79EC292F543B2D009062F6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B2SH009F543B2E009062F6 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -33,6 +125,8 @@
 			isa = PBXGroup;
 			children = (
 				7A79EC0B2F543B2D009062F6 /* Sphere */,
+				7A79EC222F543B2D009062F6 /* SphereWidget */,
+				B2SH00CF543B2E009062F6 /* SphereShare */,
 				7A79EC0A2F543B2D009062F6 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +135,8 @@
 			isa = PBXGroup;
 			children = (
 				7A79EC092F543B2D009062F6 /* Sphere.app */,
+				7A79EC202F543B2D009062F6 /* SphereWidget.appex */,
+				B2SH001F543B2E009062F6 /* SphereShareExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -55,20 +151,66 @@
 				7A79EC052F543B2D009062F6 /* Sources */,
 				7A79EC062F543B2D009062F6 /* Frameworks */,
 				7A79EC072F543B2D009062F6 /* Resources */,
+				7A79EC232F543B2D009062F6 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				7A79EC252F543B2D009062F6 /* PBXTargetDependency */,
+				B2SH004F543B2E009062F6 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				7A79EC0B2F543B2D009062F6 /* Sphere */,
 			);
 			name = Sphere;
 			packageProductDependencies = (
+				7A79EC192F543B2D009062F6 /* GoogleSignIn */,
+				7A79EC1A2F543B2D009062F6 /* Supabase */,
+				7A79EC1E2F543B2D009062F6 /* ExyteChat */,
 			);
 			productName = Sphere;
 			productReference = 7A79EC092F543B2D009062F6 /* Sphere.app */;
 			productType = "com.apple.product-type.application";
+		};
+		7A79EC242F543B2D009062F6 /* SphereWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7A79EC272F543B2D009062F6 /* Build configuration list for PBXNativeTarget "SphereWidget" */;
+			buildPhases = (
+				7A79EC282F543B2D009062F6 /* Sources */,
+				7A79EC292F543B2D009062F6 /* Frameworks */,
+				7A79EC2A2F543B2D009062F6 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				7A79EC222F543B2D009062F6 /* SphereWidget */,
+			);
+			name = SphereWidget;
+			productName = SphereWidget;
+			productReference = 7A79EC202F543B2D009062F6 /* SphereWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		B2SH005F543B2E009062F6 /* SphereShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B2SH006F543B2E009062F6 /* Build configuration list for PBXNativeTarget "SphereShareExtension" */;
+			buildPhases = (
+				B2SH00BF543B2E009062F6 /* Sources */,
+				B2SH009F543B2E009062F6 /* Frameworks */,
+				B2SH00AF543B2E009062F6 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				B2SH00CF543B2E009062F6 /* SphereShare */,
+			);
+			name = SphereShareExtension;
+			productName = SphereShareExtension;
+			productReference = B2SH001F543B2E009062F6 /* SphereShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -83,6 +225,12 @@
 					7A79EC082F543B2D009062F6 = {
 						CreatedOnToolsVersion = 26.2;
 					};
+					7A79EC242F543B2D009062F6 = {
+						CreatedOnToolsVersion = 26.2;
+					};
+					B2SH005F543B2E009062F6 = {
+						CreatedOnToolsVersion = 26.2;
+					};
 				};
 			};
 			buildConfigurationList = 7A79EC042F543B2D009062F6 /* Build configuration list for PBXProject "Sphere" */;
@@ -94,18 +242,39 @@
 			);
 			mainGroup = 7A79EC002F543B2D009062F6;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				7A79EC172F543B2D009062F6 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+				7A79EC182F543B2D009062F6 /* XCRemoteSwiftPackageReference "supabase-swift" */,
+				7A79EC1D2F543B2D009062F6 /* XCRemoteSwiftPackageReference "Chat" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 7A79EC0A2F543B2D009062F6 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				7A79EC082F543B2D009062F6 /* Sphere */,
+				7A79EC242F543B2D009062F6 /* SphereWidget */,
+				B2SH005F543B2E009062F6 /* SphereShareExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		7A79EC072F543B2D009062F6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7A79EC2A2F543B2D009062F6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B2SH00AF543B2E009062F6 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -122,7 +291,34 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		7A79EC282F543B2D009062F6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B2SH00BF543B2E009062F6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		7A79EC252F543B2D009062F6 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7A79EC242F543B2D009062F6 /* SphereWidget */;
+			targetProxy = 7A79EC262F543B2D009062F6 /* PBXContainerItemProxy */;
+		};
+		B2SH004F543B2E009062F6 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B2SH005F543B2E009062F6 /* SphereShareExtension */;
+			targetProxy = B2SH003F543B2E009062F6 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		7A79EC122F543B2E009062F6 /* Debug */ = {
@@ -160,7 +356,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = 927Q9T8JRM;
+				DEVELOPMENT_TEAM = 28WZUYWW9J;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -224,7 +420,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = 927Q9T8JRM;
+				DEVELOPMENT_TEAM = 28WZUYWW9J;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -254,17 +450,20 @@
 				CODE_SIGN_ENTITLEMENTS = Sphere/Sphere.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 927Q9T8JRM;
+				DEVELOPMENT_TEAM = 28WZUYWW9J;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CADisableMinimumFrameDurationOnPhone = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = sphere;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.evgeniy.Sphere;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kolyapavlov.sphere;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -287,17 +486,20 @@
 				CODE_SIGN_ENTITLEMENTS = Sphere/Sphere.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 927Q9T8JRM;
+				DEVELOPMENT_TEAM = 28WZUYWW9J;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CADisableMinimumFrameDurationOnPhone = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = sphere;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.evgeniy.Sphere;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kolyapavlov.sphere;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -307,6 +509,112 @@
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		7A79EC2B2F543B2D009062F6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = SphereWidget/SphereWidgetExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 28WZUYWW9J;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SphereWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kolyapavlov.sphere.SphereWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		7A79EC2C2F543B2D009062F6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = SphereWidget/SphereWidgetExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 28WZUYWW9J;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SphereWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kolyapavlov.sphere.SphereWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		B2SH007F543B2E009062F6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = SphereShare/SphereShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 28WZUYWW9J;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SphereShare/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kolyapavlov.sphere.SphereShareExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B2SH008F543B2E009062F6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = SphereShare/SphereShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 28WZUYWW9J;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SphereShare/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kolyapavlov.sphere.SphereShareExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -333,7 +641,70 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		7A79EC272F543B2D009062F6 /* Build configuration list for PBXNativeTarget "SphereWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7A79EC2B2F543B2D009062F6 /* Debug */,
+				7A79EC2C2F543B2D009062F6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B2SH006F543B2E009062F6 /* Build configuration list for PBXNativeTarget "SphereShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B2SH007F543B2E009062F6 /* Debug */,
+				B2SH008F543B2E009062F6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		7A79EC172F543B2D009062F6 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 9.0.0;
+			};
+		};
+		7A79EC182F543B2D009062F6 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+		7A79EC1D2F543B2D009062F6 /* XCRemoteSwiftPackageReference "Chat" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/exyte/Chat";
+			requirement = {
+				kind = exactVersion;
+				version = 2.1.4;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		7A79EC192F543B2D009062F6 /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7A79EC172F543B2D009062F6 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
+		};
+		7A79EC1A2F543B2D009062F6 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7A79EC182F543B2D009062F6 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
+		7A79EC1E2F543B2D009062F6 /* ExyteChat */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7A79EC1D2F543B2D009062F6 /* XCRemoteSwiftPackageReference "Chat" */;
+			productName = ExyteChat;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 7A79EC012F543B2D009062F6 /* Project object */;
 }

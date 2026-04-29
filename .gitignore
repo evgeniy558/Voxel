@@ -16,3 +16,27 @@ __pycache__/
 
 # Go backend (local build artifact)
 sphere-backend/server
+
+# Local Archives / IPA
+build/
+
+# Editor / agent caches
+.cursor/
+.claude/
+
+# BFG cleaner output
+.git.bfg-report/
+
+# Local scratch / extracted frames
+video_frames/
+
+# Node (admin dashboard)
+admin/node_modules/
+admin/.next/
+admin/out/
+
+# Local export configs (contain teamID)
+ExportOptions.plist
+
+# Widget local notes (duplicates entitlements; not needed in repo)
+SphereWidget/Bridge_ключи.txt

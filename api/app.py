@@ -2,14 +2,13 @@
 API: Spotify трек → MP3 через spotisaver.net.
 Прокси к spotisaver.net: get_playlist (метаданные) → download_track (MP3).
 GET /api?url=<spotify_track_url>
-Контракт для приложения: ответ — бинарный MP3 (полный трек).
-Зависимости: flask, requests.
+Контракт: ответ — бинарный MP3.
 """
 import os
 import urllib.parse
 
 import requests
-from flask import Flask, request, Response, jsonify, stream_with_context
+from flask import Flask, request, Response, jsonify
 
 app = Flask(__name__)
 
@@ -79,7 +78,6 @@ def download_track_stream(track: dict):
         stream=True,
     )
     r.raise_for_status()
-    # Если бэкенд вернул JSON (ошибка), не стримим как MP3
     ct = (r.headers.get("Content-Type") or "").lower()
     if "application/json" in ct:
         err = r.json() if r.content else {}
@@ -90,9 +88,19 @@ def download_track_stream(track: dict):
 @app.route("/api", methods=["GET"])
 @app.route("/", methods=["GET"])
 def convert():
+    # Чтобы в терминале было видно каждый запрос
+    url_param = request.args.get("url") or ""
+    print(f"[Sphere API] {request.method} {request.path} url={'да' if url_param.strip() else 'нет'}", flush=True)
+
     raw = (request.args.get("url") or "").strip()
     if not raw:
-        return jsonify({"error": "Missing url parameter"}), 400
+        print("[Sphere API] ответ 200 (нет url)", flush=True)
+        return (
+            "Sphere API: добавь параметр ?url= с ссылкой на трек Spotify.\n"
+            "Пример: /api?url=https://open.spotify.com/track/...",
+            200,
+            {"Content-Type": "text/plain; charset=utf-8"},
+        )
     url = urllib.parse.unquote(raw)
     if not url.startswith("http"):
         url = "https://" + url
@@ -104,6 +112,7 @@ def convert():
 
     track = get_track_from_spotisaver(url)
     if not track:
+        print("[Sphere API] ответ 502 (spotisaver не вернул трек)", flush=True)
         return jsonify({
             "error": "Could not get track info from spotisaver.net (or track not found)."
         }), 502
@@ -115,10 +124,9 @@ def convert():
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 502
 
-    def generate():
-        for chunk in down.iter_content(chunk_size=65536):
-            if chunk:
-                yield chunk
+    body = b"".join(down.iter_content(chunk_size=65536))
+    if not body:
+        return jsonify({"error": "Empty response from spotisaver"}), 502
 
     filename = "track.mp3"
     try:
@@ -128,14 +136,17 @@ def convert():
             filename = f"{', '.join(artists)} - {name}.mp3"
         else:
             filename = f"{name}.mp3"
+        filename = filename.encode("latin-1", "replace").decode("latin-1")
     except Exception:
         pass
 
+    print("[Sphere API] ответ 200 MP3", len(body), "bytes", flush=True)
     return Response(
-        stream_with_context(generate()),
+        body,
         mimetype="audio/mpeg",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(body)),
         },
     )
 

@@ -64,6 +64,11 @@ final class NowPlayingManager {
     private let center = MPNowPlayingInfoCenter.default()
     private let remote = MPRemoteCommandCenter.shared()
 
+    private var animatedTimer: Timer?
+    private var animatedFrames: [UIImage] = []
+    private var animatedFrameIndex: Int = 0
+    private var animatedClipKey: String?
+
     /// Системная фиолетовая обложка с Voxmusic для Lock Screen / Control Center, когда у трека нет загруженной обложки.
     private static let defaultPurpleArtworkImage: UIImage = {
         let size: CGFloat = 512
@@ -134,7 +139,8 @@ final class NowPlayingManager {
         duration: TimeInterval,
         currentTime: TimeInterval,
         isPlaying: Bool,
-        artwork: UIImage?
+        artwork: UIImage?,
+        clipURL: URL? = nil
     ) {
         var info = center.nowPlayingInfo ?? [String: Any]()
         info[MPMediaItemPropertyTitle] = title ?? ""
@@ -146,10 +152,55 @@ final class NowPlayingManager {
         let mpArtwork = MPMediaItemArtwork(boundsSize: imageToShow.size) { _ in imageToShow }
         info[MPMediaItemPropertyArtwork] = mpArtwork
         center.nowPlayingInfo = info
+
+        if let clipURL = clipURL {
+            startAnimatedArtwork(for: clipURL)
+        } else {
+            stopAnimatedArtwork()
+        }
+    }
+
+    private func startAnimatedArtwork(for clipURL: URL) {
+        let key = clipURL.absoluteString
+        if animatedClipKey == key, !animatedFrames.isEmpty { return }
+        stopAnimatedArtwork()
+        animatedClipKey = key
+        Task { @MainActor in
+            guard let frames = await AnimatedArtworkExtractor.shared.frames(for: clipURL),
+                  !frames.images.isEmpty,
+                  self.animatedClipKey == key else { return }
+            self.animatedFrames = frames.images
+            self.animatedFrameIndex = 0
+            let interval: TimeInterval = 1.0 / 12.0
+            let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+                self?.advanceAnimatedFrame()
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            self.animatedTimer = timer
+        }
+    }
+
+    private func stopAnimatedArtwork() {
+        animatedTimer?.invalidate()
+        animatedTimer = nil
+        animatedFrames = []
+        animatedFrameIndex = 0
+        animatedClipKey = nil
+    }
+
+    private func advanceAnimatedFrame() {
+        guard !animatedFrames.isEmpty else { return }
+        let image = animatedFrames[animatedFrameIndex % animatedFrames.count]
+        animatedFrameIndex = (animatedFrameIndex + 1) % animatedFrames.count
+        var info = center.nowPlayingInfo ?? [:]
+        let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        info[MPMediaItemPropertyArtwork] = artwork
+        center.nowPlayingInfo = info
     }
 
     /// Сброс (когда воспроизведение остановлено).
     func clear() {
+        stopAnimatedArtwork()
         center.nowPlayingInfo = nil
     }
 }
