@@ -329,7 +329,7 @@ struct ArtistProfileView: View {
 
 // MARK: - Row
 
-private struct ArtistTrackRow: View {
+struct ArtistTrackRow: View {
     let index: Int
     let track: CatalogTrack
     let isDarkMode: Bool

@@ -138,7 +138,7 @@ struct PlaylistDetailView: View {
                     .foregroundStyle(.secondary)
             } else {
                 LazyVStack(spacing: 0) {
-                    ForEach(Array(tracks.enumerated()), id: \\.element.id) { idx, track in
+                    ForEach(Array(tracks.enumerated()), id: \.element.compositeKey) { idx, track in
                         ArtistTrackRow(
                             index: idx + 1,
                             track: track,

@@ -510,7 +510,7 @@ struct AlbumDetailView: View {
     }
 }
 
-private struct AlbumDetailArtwork: View {
+struct AlbumDetailArtwork: View {
     let urlString: String?
     let accent: Color
 
