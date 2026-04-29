@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Scheme
    LastUpgradeVersion = "2620"
-   version = "1.7">
+   version = "1.8">
    <BuildAction
       parallelizeBuildables = "YES"
       buildImplicitDependencies = "YES"
@@ -55,6 +55,8 @@
       buildConfiguration = "Debug"
       selectedDebugger = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncher = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES"
       shouldAutocreateTestPlan = "YES">
       <Testables>
@@ -64,6 +66,8 @@
       buildConfiguration = "Debug"
       selectedDebugger = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncher = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       launchStyle = "0"
       useCustomWorkingDirectory = "NO"
       ignoresPersistentStateOnLaunch = "NO"
