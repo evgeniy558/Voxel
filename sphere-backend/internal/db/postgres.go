@@ -53,13 +53,36 @@ CREATE TABLE IF NOT EXISTS favorites (
 );
 
 -- favorites: enforce allowed item types + upgrade unique key
-ALTER TABLE favorites
-    ADD CONSTRAINT IF NOT EXISTS favorites_item_type_check
-    CHECK (item_type IN ('track','album','playlist','artist'));
+-- (PostgreSQL has no "ADD CONSTRAINT IF NOT EXISTS"; use DO blocks for idempotency)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint c
+        JOIN pg_class t ON c.conrelid = t.oid
+        WHERE t.relname = 'favorites' AND c.conname = 'favorites_item_type_check'
+    ) THEN
+        ALTER TABLE favorites ADD CONSTRAINT favorites_item_type_check
+            CHECK (item_type IN ('track','album','playlist','artist'));
+    END IF;
+END $$;
 ALTER TABLE favorites DROP CONSTRAINT IF EXISTS favorites_user_id_provider_provider_item_id_key;
-ALTER TABLE favorites
-    ADD CONSTRAINT IF NOT EXISTS favorites_user_item_unique
-    UNIQUE (user_id, item_type, provider, provider_item_id);
+DO $$
+DECLARE
+    has_new_unique boolean;
+BEGIN
+    SELECT EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON c.conrelid = t.oid
+        WHERE t.relname = 'favorites'
+          AND c.contype = 'u'
+          AND pg_get_constraintdef(c.oid) LIKE '%(user_id, item_type, provider, provider_item_id)%'
+    ) INTO has_new_unique;
+    IF NOT has_new_unique THEN
+        ALTER TABLE favorites ADD CONSTRAINT favorites_user_item_unique
+            UNIQUE (user_id, item_type, provider, provider_item_id);
+    END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS favorites_user_type_time_idx ON favorites(user_id, item_type, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS uploads (
