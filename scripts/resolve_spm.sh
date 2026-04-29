@@ -1,22 +1,41 @@
 #!/usr/bin/env bash
-# Re-resolve Swift packages when Xcode shows all dependencies in red
-# (common causes: disk full, interrupted checkout, corrupt DerivedData checkouts).
-set -euo pipefail
+# Восстановление SwiftPM после «Missing package product» / красных пакетов в Xcode.
+# Частые причины: переполненный диск, оборванный git checkout, гонка при первом clone пакета Chat.
+set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-echo "Removing Sphere DerivedData folders (only names starting with Sphere-)…"
+echo "→ Закрой Xcode полностью (⌘Q), иначе он снова заблокирует или перезапишет DerivedData."
+echo "→ Удаляю ~/Library/Developer/Xcode/DerivedData/Sphere-* …"
 rm -rf "${HOME}/Library/Developer/Xcode/DerivedData/Sphere-"*
 
-CLONE_DIR="${TMPDIR:-/tmp}/SphereSPMCheckouts"
-mkdir -p "$CLONE_DIR"
+XCB=(
+  xcodebuild
+  -project Sphere.xcodeproj
+  -scheme Sphere
+  -resolvePackageDependencies
+)
 
-echo "Resolving packages with clone directory: $CLONE_DIR"
-xcodebuild \
-  -project Sphere.xcodeproj \
-  -scheme Sphere \
-  -resolvePackageDependencies \
-  -clonedSourcePackagesDirPath "$CLONE_DIR"
+if [[ -n "${SPHERE_SPM_CLONE_DIR:-}" ]]; then
+  mkdir -p "$SPHERE_SPM_CLONE_DIR"
+  XCB+=(-clonedSourcePackagesDirPath "$SPHERE_SPM_CLONE_DIR")
+  echo "→ Клоны пакетов: $SPHERE_SPM_CLONE_DIR"
+fi
 
-echo "Done. Open Sphere.xcodeproj in Xcode, then Product → Clean Build Folder and build."
+set +e
+for attempt in 1 2 3; do
+  echo "→ Resolve, попытка $attempt из 3…"
+  "${XCB[@]}"
+  rc=$?
+  if [[ $rc -eq 0 ]]; then
+    echo "→ Готово. Открой Sphere.xcodeproj → Product → Clean Build Folder → Build."
+    exit 0
+  fi
+  echo "   (код $rc — часто checkout Chat не успел; повтор через 2 с)"
+  sleep 2
+done
+set -e
+
+echo "→ Не вышло за 3 попытки. Освободи ≥3–5 ГБ на диске, проверь сеть/VPN, снова запусти этот скрипт." >&2
+exit 1
