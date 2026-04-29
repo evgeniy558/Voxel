@@ -1007,6 +1007,8 @@ struct ContentView: View {
 
     var body: some View {
         GeometryReader { geo in
+            let w = max(geo.size.width, 1)
+            let h = max(geo.size.height, 1)
             ZStack {
                 Group {
                     if shouldShowMainApp {
@@ -1024,8 +1026,8 @@ struct ContentView: View {
                             }
                         )
                             .frame(
-                                width: loginScreenFixedSize?.width ?? geo.size.width,
-                                height: loginScreenFixedSize?.height ?? geo.size.height
+                                width: loginScreenFixedSize?.width ?? w,
+                                height: loginScreenFixedSize?.height ?? h
                             )
                     }
                 }
@@ -1039,12 +1041,8 @@ struct ContentView: View {
                         }
                     }
                 )
-                .frame(
-                    minWidth: shouldShowMainApp ? 0 : (loginScreenFixedSize?.width ?? 0),
-                    minHeight: shouldShowMainApp ? 0 : (loginScreenFixedSize?.height ?? 0)
-                )
-
             }
+            .frame(width: w, height: h)
         }
         .ignoresSafeArea(.keyboard)
         .preferredColorScheme(colorSchemeOverride)
