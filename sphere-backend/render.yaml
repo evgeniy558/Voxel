@@ -97,6 +97,8 @@ services:
       # Helps bypass "confirm you're not a bot" blocks on cloud IPs.
       - key: YTDLP_COOKIES
         sync: false
+      - key: YTDLP_COOKIES_B64
+        sync: false
 
       # Deezer ARL cookie from a logged-in deezer.com session.
       # Required for full-track audio (otherwise only 30-second public previews

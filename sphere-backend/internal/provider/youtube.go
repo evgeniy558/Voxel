@@ -2,12 +2,14 @@ package provider
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"os/exec"
 	"strings"
 	"sync"
@@ -47,6 +49,19 @@ func NewYouTube(geniusToken string) *YouTube {
 		path = "yt-dlp"
 	}
 	cookies := strings.TrimSpace(os.Getenv("YTDLP_COOKIES"))
+	// Render can't mount a file easily; allow passing cookies.txt as base64 in env.
+	if cookies == "" {
+		if b64 := strings.TrimSpace(os.Getenv("YTDLP_COOKIES_B64")); b64 != "" {
+			if decoded, err := decodeBase64Loose(b64); err == nil && len(decoded) > 0 {
+				tmp := filepath.Join(os.TempDir(), "ytdlp-cookies.txt")
+				// best-effort write; keep private permissions
+				_ = os.WriteFile(tmp, decoded, 0o600)
+				cookies = tmp
+			} else if err != nil {
+				log.Printf("[yt-dlp] cookies_b64 decode err=%v", err)
+			}
+		}
+	}
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "tcp4", addr)
@@ -60,6 +75,26 @@ func NewYouTube(geniusToken string) *YouTube {
 		trackMeta:   make(map[string]*model.Track),
 		geniusToken: geniusToken,
 	}
+}
+
+func decodeBase64Loose(s string) ([]byte, error) {
+	// accept both standard and URL-safe base64, with or without padding
+	s = strings.TrimSpace(s)
+	s = strings.ReplaceAll(s, "\n", "")
+	s = strings.ReplaceAll(s, "\r", "")
+	if s == "" {
+		return nil, fmt.Errorf("empty")
+	}
+	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	if b, err := base64.RawStdEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	if b, err := base64.URLEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	return base64.RawURLEncoding.DecodeString(s)
 }
 
 func (y *YouTube) Name() string { return "youtube" }
