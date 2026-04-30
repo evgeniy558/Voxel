@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ const ytdlpUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWeb
 
 type YouTube struct {
 	ytdlpPath   string
+	ytdlpCookies string
 	ytClient    ytclient.Client
 	cache       map[string]cacheEntry
 	trackMeta   map[string]*model.Track
@@ -36,11 +38,15 @@ type YouTube struct {
 	geniusToken string
 }
 
+// Limit concurrent yt-dlp runs to avoid OOM kills on small Render instances.
+var ytdlpSem = make(chan struct{}, 2)
+
 func NewYouTube(geniusToken string) *YouTube {
 	path, _ := exec.LookPath("yt-dlp")
 	if path == "" {
 		path = "yt-dlp"
 	}
+	cookies := strings.TrimSpace(os.Getenv("YTDLP_COOKIES"))
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "tcp4", addr)
@@ -48,6 +54,7 @@ func NewYouTube(geniusToken string) *YouTube {
 	}
 	return &YouTube{
 		ytdlpPath:   path,
+		ytdlpCookies: cookies,
 		ytClient:    ytclient.Client{HTTPClient: &http.Client{Transport: transport, Timeout: 30 * time.Second}},
 		cache:       make(map[string]cacheEntry),
 		trackMeta:   make(map[string]*model.Track),
@@ -221,19 +228,33 @@ func (y *YouTube) GetTrackStreamURL(ctx context.Context, id string) (string, err
 func (y *YouTube) getStreamViaYtdlp(ctx context.Context, id string) (string, error) {
 	videoURL := "https://www.youtube.com/watch?v=" + id
 
+	// Concurrency guard to avoid OOM (signal: killed) in small containers.
+	select {
+	case ytdlpSem <- struct{}{}:
+		defer func() { <-ytdlpSem }()
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+
 	// Bound yt-dlp wall-clock so a hung extraction never holds the request.
-	cmdCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	cmdCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 
 	args := []string{
 		"-f", "bestaudio[ext=m4a]/bestaudio[acodec^=opus]/bestaudio/best",
 		"--get-url",
 		"--no-warnings", "--no-check-certificates", "--no-playlist",
+		"--no-cache-dir",
 		"--user-agent", ytdlpUserAgent,
 		"--extractor-args", "youtube:player_client=android,web,ios",
-		"--socket-timeout", "10",
-		"--retries", "2",
+		"--socket-timeout", "15",
+		"--retries", "3",
 		videoURL,
+	}
+	if y.ytdlpCookies != "" {
+		// Use a Netscape cookies.txt file exported from a logged-in browser session.
+		// This avoids the “confirm you’re not a bot” roadblock on cloud IP ranges.
+		args = append([]string{"--cookies", y.ytdlpCookies}, args...)
 	}
 	cmd := exec.CommandContext(cmdCtx, y.ytdlpPath, args...)
 

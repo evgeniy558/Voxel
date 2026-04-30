@@ -93,6 +93,11 @@ services:
       - key: GENIUS_TOKEN
         sync: false
 
+      # Optional: yt-dlp cookies file path (Netscape format) mounted in the container.
+      # Helps bypass "confirm you're not a bot" blocks on cloud IPs.
+      - key: YTDLP_COOKIES
+        sync: false
+
       # Deezer ARL cookie from a logged-in deezer.com session.
       # Required for full-track audio (otherwise only 30-second public previews
       # are available and the player falls back to YouTube/SoundCloud).
