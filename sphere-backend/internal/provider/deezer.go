@@ -154,7 +154,6 @@ func DeezerGetArtist(ctx context.Context, id string) (*model.Artist, error) {
 				CoverURL:   dt.coverURL(),
 				Duration:   dt.Duration,
 				PreviewURL: dt.Preview,
-				StreamURL:  dt.Preview,
 			})
 		}
 	}
@@ -220,7 +219,6 @@ func DeezerGetAlbum(ctx context.Context, id string) (*model.Album, error) {
 			CoverURL:   firstNonEmpty(da.CoverXL, da.CoverBig, da.Cover, dt.coverURL()),
 			Duration:   dt.Duration,
 			PreviewURL: dt.Preview,
-			StreamURL:  dt.Preview,
 		})
 	}
 	return album, nil

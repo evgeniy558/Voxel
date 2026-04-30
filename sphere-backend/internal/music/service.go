@@ -3,8 +3,10 @@ package music
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"sphere-backend/internal/model"
 	"sphere-backend/internal/provider"
@@ -76,13 +78,27 @@ func (s *Service) GetTrackStreamURL(ctx context.Context, providerName, id string
 		return url, nil
 	}
 
-	// Fallback: get track metadata, search on SoundCloud/YouTube for same track
+	// Fallback path: provider only ships previews (Deezer / often Spotify) or
+	// stream resolution failed. Match by artist+title on YouTube/SoundCloud
+	// and stream from there.
+	log.Printf("[stream-fallback] provider=%s id=%s reason=%v", providerName, id, err)
+
 	track, tErr := p.GetTrack(ctx, id)
 	if tErr != nil || track == nil {
 		return "", err
 	}
-	query := track.Artist + " " + track.Title
-	for _, fallbackName := range []string{"soundcloud", "youtube"} {
+	query := strings.TrimSpace(track.Artist + " " + track.Title)
+	if query == "" {
+		return "", err
+	}
+
+	// Bound the fallback search so a single slow provider can't stall playback.
+	fbCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+
+	// Order: YouTube first (largest catalogue, full-track audio via yt-dlp),
+	// then SoundCloud (often broken originals or DJ rips) as a last resort.
+	for _, fallbackName := range []string{"youtube", "soundcloud"} {
 		if fallbackName == providerName {
 			continue
 		}
@@ -90,17 +106,21 @@ func (s *Service) GetTrackStreamURL(ctx context.Context, providerName, id string
 		if !ok {
 			continue
 		}
-		sr, sErr := fp.Search(ctx, query, 3)
+		sr, sErr := fp.Search(fbCtx, query, 3)
 		if sErr != nil || sr == nil || len(sr.Tracks) == 0 {
+			log.Printf("[stream-fallback] %s search miss for %q: %v", fallbackName, query, sErr)
 			continue
 		}
 		for _, t := range sr.Tracks {
-			streamURL, sErr := fp.GetTrackStreamURL(ctx, t.ID)
+			streamURL, sErr := fp.GetTrackStreamURL(fbCtx, t.ID)
 			if sErr == nil && streamURL != "" {
+				log.Printf("[stream-fallback] resolved provider=%s id=%s via=%s/%s",
+					providerName, id, fallbackName, t.ID)
 				return streamURL, nil
 			}
 		}
 	}
+	log.Printf("[stream-fallback] exhausted provider=%s id=%s query=%q", providerName, id, query)
 	return "", err
 }
 

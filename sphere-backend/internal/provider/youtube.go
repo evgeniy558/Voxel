@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os/exec"
@@ -15,6 +16,10 @@ import (
 
 	"sphere-backend/internal/model"
 )
+
+// User-Agent passed to yt-dlp; mimics a recent stable Chrome on macOS so
+// YouTube is more likely to return non-throttled `googlevideo.com` URLs.
+const ytdlpUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
 // YouTube provider — full audio streaming without any API keys or cookies.
 //   Search: yt-dlp --flat-playlist
@@ -169,68 +174,110 @@ func (y *YouTube) GetTrackStreamURL(ctx context.Context, id string) (string, err
 	}
 	y.mu.RUnlock()
 
-	// Try Go library first
-	video, err := y.ytClient.GetVideoContext(ctx, id)
-	if err == nil {
+	// Primary: yt-dlp (kept up-to-date via pip in Docker; handles YouTube cipher
+	// changes much more reliably than the embedded Go library).
+	streamURL, ytErr := y.getStreamViaYtdlp(ctx, id)
+	if ytErr == nil && streamURL != "" {
+		y.mu.Lock()
+		y.cache[id] = cacheEntry{url: streamURL, expiresAt: time.Now().Add(2 * time.Hour)}
+		y.mu.Unlock()
+		return streamURL, nil
+	}
+
+	// Fallback: kkdai/youtube. Often broken on cipher changes, so it's the
+	// safety net rather than the primary path.
+	video, libErr := y.ytClient.GetVideoContext(ctx, id)
+	if libErr == nil {
 		formats := video.Formats.Type("audio")
 		if len(formats) > 0 {
-			if streamURL, err := y.ytClient.GetStreamURL(video, &formats[0]); err == nil && streamURL != "" {
+			if u, err := y.ytClient.GetStreamURL(video, &formats[0]); err == nil && u != "" {
 				y.mu.Lock()
-				y.cache[id] = cacheEntry{url: streamURL, expiresAt: time.Now().Add(3 * time.Hour)}
+				y.cache[id] = cacheEntry{url: u, expiresAt: time.Now().Add(3 * time.Hour)}
 				y.mu.Unlock()
-				return streamURL, nil
-			}
-		}
-	}
-
-	// Fallback: yt-dlp
-	streamURL, ytErr := y.getStreamViaYtdlp(ctx, id)
-	if ytErr != nil {
-		if err != nil {
-			return "", fmt.Errorf("go-lib: %w; yt-dlp: %v", err, ytErr)
-		}
-		return "", ytErr
-	}
-
-	y.mu.Lock()
-	y.cache[id] = cacheEntry{url: streamURL, expiresAt: time.Now().Add(2 * time.Hour)}
-	y.mu.Unlock()
-	return streamURL, nil
-}
-
-func (y *YouTube) getStreamViaYtdlp(ctx context.Context, id string) (string, error) {
-	videoURL := "https://www.youtube.com/watch?v=" + id
-	baseArgs := []string{
-		"-f", "bestaudio[ext=m4a]/bestaudio/best",
-		"--get-url", "--no-warnings", "--no-check-certificates",
-		"--no-playlist",
-	}
-
-	// Try with browser cookies first
-	for _, browser := range []string{"safari", "chrome", "firefox"} {
-		args := append(baseArgs, "--cookies-from-browser", browser, videoURL)
-		cmd := exec.CommandContext(ctx, y.ytdlpPath, args...)
-		out, err := cmd.Output()
-		if err == nil {
-			u := strings.TrimSpace(string(out))
-			if u != "" {
+				log.Printf("[yt-stream] id=%s via=go-lib (yt-dlp failed: %v)", id, ytErr)
 				return u, nil
 			}
 		}
 	}
 
-	// Try without cookies
-	args := append(baseArgs, videoURL)
-	cmd := exec.CommandContext(ctx, y.ytdlpPath, args...)
+	if ytErr != nil && libErr != nil {
+		return "", fmt.Errorf("yt-dlp: %v; go-lib: %w", ytErr, libErr)
+	}
+	if ytErr != nil {
+		return "", ytErr
+	}
+	return "", fmt.Errorf("no audio formats")
+}
+
+// getStreamViaYtdlp resolves a direct googlevideo.com URL using yt-dlp.
+//
+// We skip `--cookies-from-browser` entirely — on the Render Alpine container
+// there is no Safari/Chrome/Firefox installed, so each attempt fails after a
+// long timeout and just adds latency before the real (cookie-less) call.
+//
+// `extractor-args youtube:player_client=android,web,ios` works around the
+// PoToken / cipher-throttling regressions YouTube ships periodically and is
+// the most reliable client mix at the time of writing.
+func (y *YouTube) getStreamViaYtdlp(ctx context.Context, id string) (string, error) {
+	videoURL := "https://www.youtube.com/watch?v=" + id
+
+	// Bound yt-dlp wall-clock so a hung extraction never holds the request.
+	cmdCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+
+	args := []string{
+		"-f", "bestaudio[ext=m4a]/bestaudio[acodec^=opus]/bestaudio/best",
+		"--get-url",
+		"--no-warnings", "--no-check-certificates", "--no-playlist",
+		"--user-agent", ytdlpUserAgent,
+		"--extractor-args", "youtube:player_client=android,web,ios",
+		"--socket-timeout", "10",
+		"--retries", "2",
+		videoURL,
+	}
+	cmd := exec.CommandContext(cmdCtx, y.ytdlpPath, args...)
+
+	// Capture stderr separately so we can surface yt-dlp's diagnostic output
+	// in Render logs (otherwise yt-dlp failures look like opaque exit codes).
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("yt-dlp stream: %w", err)
+		es := strings.TrimSpace(stderr.String())
+		log.Printf("[yt-dlp] id=%s err=%v stderr=%q", id, err, truncate(es, 240))
+		return "", fmt.Errorf("yt-dlp: %w (%s)", err, truncate(es, 120))
 	}
+
 	u := strings.TrimSpace(string(out))
+	// `--get-url` can emit multiple URLs (one per format). Pick the first
+	// non-empty line.
+	if i := strings.IndexByte(u, '\n'); i > 0 {
+		u = strings.TrimSpace(u[:i])
+	}
 	if u == "" {
 		return "", fmt.Errorf("yt-dlp returned empty URL")
 	}
+	log.Printf("[yt-dlp] id=%s ok host=%s", id, hostOf(u))
 	return u, nil
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
+func hostOf(rawURL string) string {
+	if i := strings.Index(rawURL, "://"); i >= 0 {
+		rest := rawURL[i+3:]
+		if j := strings.IndexAny(rest, "/?"); j > 0 {
+			return rest[:j]
+		}
+		return rest
+	}
+	return ""
 }
 
 func (y *YouTube) GetLyrics(ctx context.Context, id string) (*model.Lyrics, error) {

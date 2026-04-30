@@ -28,6 +28,7 @@ struct AuthSheetView: View {
     @State private var twoFAMethod = "email"
     @State private var twoFACode = ""
     @State private var showForgotPassword = false
+    @State private var showQRLogin = false
 
     private enum AuthMode: Hashable {
         case login
@@ -135,6 +136,18 @@ struct AuthSheetView: View {
             }
             .preferredColorScheme(.dark)
         }
+        .sheet(isPresented: $showQRLogin) {
+            QRLoginSignInSheet(
+                isEnglish: isEnglish,
+                accent: accent,
+                onAuthenticated: {
+                    showQRLogin = false
+                    onAuthenticated()
+                },
+                onDismiss: { showQRLogin = false }
+            )
+            .preferredColorScheme(.dark)
+        }
     }
 
     // MARK: - Dark glass card
@@ -191,6 +204,9 @@ struct AuthSheetView: View {
                         .padding(.vertical, 4)
 
                     googleButton
+                        .padding(.horizontal, 18)
+
+                    qrSignInButton
                         .padding(.horizontal, 18)
 
                     if let signupMessage {
@@ -425,6 +441,32 @@ struct AuthSheetView: View {
         .disabled(isSigningInWithGoogle)
     }
 
+    private var qrSignInButton: some View {
+        Button {
+            showQRLogin = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "qrcode")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+                Text(isEnglish ? "Sign in with QR" : "Войти по QR-коду")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.white.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - 2FA sheet content
 
     @ViewBuilder
@@ -642,5 +684,193 @@ private extension DarkGlassTextField where Trailing == EmptyView {
         self.leadingSystemImage = leadingSystemImage
         self.trailing = { EmptyView() }
         self.field = field
+    }
+}
+
+// MARK: - QR sign-in sheet
+
+/// Shown from the login screen. Generates a `/auth/qr/start` session, displays the
+/// QR code, and long-polls `/auth/qr/poll` for approval from another logged-in
+/// device (which scans the QR via Privacy → "Approve QR login").
+struct QRLoginSignInSheet: View {
+    let isEnglish: Bool
+    let accent: Color
+    var onAuthenticated: () -> Void
+    var onDismiss: () -> Void
+
+    @StateObject private var authService = AuthService.shared
+
+    @State private var qrPayload: String?
+    @State private var sessionId: String?
+    @State private var statusMessage: String?
+    @State private var isStarting = false
+    @State private var isExpired = false
+    @State private var pollTask: Task<Void, Never>?
+
+    private var titleText: String { isEnglish ? "Sign in with QR" : "Вход по QR-коду" }
+    private var instructionsText: String {
+        isEnglish
+            ? "Open Sphere on a logged-in device → Settings → Privacy → \"Approve QR login\" and scan this code."
+            : "Откройте Sphere на устройстве, где вы уже вошли → Настройки → Конфиденциальность → «Подтвердить вход по QR» и отсканируйте этот код."
+    }
+    private var refreshTitle: String { isEnglish ? "New QR" : "Новый QR" }
+    private var waitingText: String {
+        isEnglish ? "Waiting for approval…" : "Ожидаем подтверждение…"
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                LinearGradient(
+                    colors: [Color.black, Color(red: 0.06, green: 0.07, blue: 0.10)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+
+                VStack(spacing: 22) {
+                    Text(instructionsText)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color.white.opacity(0.75))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 22)
+                        .padding(.top, 8)
+
+                    qrCodeBox
+
+                    if let statusMessage {
+                        Text(statusMessage)
+                            .font(.footnote)
+                            .foregroundStyle(isExpired ? Color.red.opacity(0.9) : Color.white.opacity(0.75))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 22)
+                    } else if qrPayload != nil {
+                        HStack(spacing: 8) {
+                            ProgressView().tint(.white)
+                            Text(waitingText)
+                                .font(.footnote)
+                                .foregroundStyle(Color.white.opacity(0.7))
+                        }
+                    }
+
+                    if isExpired || (qrPayload == nil && !isStarting) {
+                        Button(refreshTitle) {
+                            Task { await startSession() }
+                        }
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(accent.opacity(0.85))
+                        )
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .padding(.top, 14)
+            }
+            .navigationTitle(titleText)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(isEnglish ? "Close" : "Закрыть") {
+                        pollTask?.cancel()
+                        onDismiss()
+                    }
+                    .tint(.white)
+                }
+            }
+        }
+        .task {
+            await startSession()
+        }
+        .onDisappear {
+            pollTask?.cancel()
+        }
+    }
+
+    private var qrCodeBox: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color.white)
+                .frame(width: 280, height: 280)
+                .shadow(color: Color.black.opacity(0.4), radius: 18, x: 0, y: 10)
+            if let payload = qrPayload {
+                SphereQRLoginQRImage(payload: payload)
+                    .opacity(isExpired ? 0.25 : 1.0)
+            } else if isStarting {
+                ProgressView().tint(.black)
+            } else {
+                Image(systemName: "qrcode")
+                    .font(.system(size: 64))
+                    .foregroundStyle(.black.opacity(0.5))
+            }
+        }
+    }
+
+    private func startSession() async {
+        await MainActor.run {
+            isStarting = true
+            isExpired = false
+            statusMessage = nil
+            qrPayload = nil
+            sessionId = nil
+        }
+        defer {
+            Task { @MainActor in isStarting = false }
+        }
+        do {
+            let resp = try await SphereAPIClient.shared.qrLoginStart()
+            await MainActor.run {
+                qrPayload = resp.qrPayload
+                sessionId = resp.sessionId
+            }
+            startPolling(sessionId: resp.sessionId)
+        } catch {
+            await MainActor.run {
+                statusMessage = isEnglish
+                    ? "Could not start QR session: \(error.localizedDescription)"
+                    : "Не удалось создать QR: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func startPolling(sessionId: String) {
+        pollTask?.cancel()
+        pollTask = Task { @MainActor in
+            // Each `qrLoginPollOnce` long-polls up to ~55s. Loop until approved,
+            // gone (expired/cancelled), or the user dismisses the sheet.
+            while !Task.isCancelled {
+                do {
+                    let result = try await SphereAPIClient.shared.qrLoginPollOnce(sessionId: sessionId)
+                    if Task.isCancelled { return }
+                    switch result {
+                    case .approved(let auth):
+                        // qrLoginPollOnce already persisted the JWT inside SphereAPIClient.
+                        // Just fan the backend user into the local profile.
+                        authService.applyBackendUser(auth.user)
+                        Task { await authService.refreshBackendAccountFromServer() }
+                        statusMessage = isEnglish ? "Signed in" : "Вход выполнен"
+                        onAuthenticated()
+                        return
+                    case .pending:
+                        continue
+                    case .gone:
+                        isExpired = true
+                        statusMessage = isEnglish
+                            ? "QR expired — tap \"New QR\" to try again."
+                            : "QR-код истёк — нажмите «Новый QR»."
+                        return
+                    }
+                } catch is CancellationError {
+                    return
+                } catch {
+                    statusMessage = error.localizedDescription
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                }
+            }
+        }
     }
 }

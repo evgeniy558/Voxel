@@ -75,18 +75,12 @@ func (d *Deezer) GetTrack(ctx context.Context, id string) (*model.Track, error) 
 	return &t, nil
 }
 
+// GetTrackStreamURL: Deezer's public API only exposes 30-second `preview` URLs —
+// returning that here would lock playback to 30s. We deliberately return an
+// error so the music service falls back to YouTube/SoundCloud (see
+// music/service.go::GetTrackStreamURL) and resolves the full track.
 func (d *Deezer) GetTrackStreamURL(ctx context.Context, id string) (string, error) {
-	track, err := d.GetTrack(ctx, id)
-	if err != nil {
-		return "", err
-	}
-	if track.PreviewURL != "" {
-		return track.PreviewURL, nil
-	}
-	if track.StreamURL != "" {
-		return track.StreamURL, nil
-	}
-	return "", fmt.Errorf("no preview available for deezer track %s", id)
+	return "", fmt.Errorf("deezer public api: 30s preview only — fallback required")
 }
 
 func (d *Deezer) GetLyrics(ctx context.Context, id string) (*model.Lyrics, error) {
@@ -146,6 +140,9 @@ func (d *Deezer) GetPlaylist(ctx context.Context, id string) (*model.Playlist, e
 
 func (dt deezerTrack) toModelTrack() model.Track {
 	cover := dt.coverURL()
+	// IMPORTANT: leave StreamURL empty — Deezer's API only exposes 30s previews.
+	// iOS resolves the full track via /tracks/deezer/{id}/stream (which falls back
+	// to YouTube/SoundCloud). PreviewURL is kept for short-form preview UI only.
 	return model.Track{
 		ID:         fmt.Sprint(dt.ID),
 		Provider:   "deezer",
@@ -155,7 +152,6 @@ func (dt deezerTrack) toModelTrack() model.Track {
 		CoverURL:   cover,
 		Duration:   dt.Duration,
 		PreviewURL: dt.Preview,
-		StreamURL:  dt.Preview,
 	}
 }
 

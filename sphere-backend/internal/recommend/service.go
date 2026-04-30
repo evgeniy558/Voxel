@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"sphere-backend/internal/history"
 	"sphere-backend/internal/model"
@@ -45,18 +46,73 @@ var genreRelated = map[string][]string{
 // Response is the JSON for GET /recommendations.
 type Response = model.RecommendationFeed
 
+// recommendationsCacheTTL controls how long a /recommendations response is
+// memoized per (userID, lang). The previous behaviour rebuilt the feed on every
+// request, which produced the "jumpy" UX the user complained about: parallel
+// provider racing + filterWithCover + dedupe-by-cover yielded a different
+// ordering / set every refresh, especially when one provider was slow.
+const recommendationsCacheTTL = 5 * time.Minute
+
+type cachedFeed struct {
+	value     *Response
+	expiresAt time.Time
+}
+
 type Service struct {
 	history *history.Service
 	music   *music.Service
 	prefs   *preferences.Service
 	spotify *provider.Spotify
+
+	cacheMu sync.Mutex
+	cache   map[string]cachedFeed
 }
 
 func NewService(h *history.Service, m *music.Service, p *preferences.Service, sp *provider.Spotify) *Service {
-	return &Service{history: h, music: m, prefs: p, spotify: sp}
+	return &Service{
+		history: h,
+		music:   m,
+		prefs:   p,
+		spotify: sp,
+		cache:   make(map[string]cachedFeed),
+	}
+}
+
+func (s *Service) cacheKey(userID, lang string) string {
+	l := strings.ToLower(strings.TrimSpace(lang))
+	if strings.Contains(l, "ru") {
+		l = "ru"
+	} else {
+		l = "en"
+	}
+	return strings.TrimSpace(userID) + "|" + l
+}
+
+func (s *Service) cachedRecommendations(key string) *Response {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	if entry, ok := s.cache[key]; ok && time.Now().Before(entry.expiresAt) {
+		return entry.value
+	}
+	return nil
+}
+
+func (s *Service) storeRecommendations(key string, resp *Response) {
+	if resp == nil {
+		return
+	}
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	s.cache[key] = cachedFeed{value: resp, expiresAt: time.Now().Add(recommendationsCacheTTL)}
 }
 
 func (s *Service) GetRecommendations(ctx context.Context, userID, lang string) *Response {
+	key := s.cacheKey(userID, lang)
+	if cached := s.cachedRecommendations(key); cached != nil {
+		log.Printf("[recommend-cache] hit user=%s lang=%s tracks=%d", userID, lang, len(cached.Tracks))
+		return cached
+	}
+
 	legacy := s.legacyGetRecommendations(ctx, userID, lang)
 	if legacy == nil {
 		legacy = &Response{Tracks: []model.Track{}, Albums: []model.Album{}, Artists: []model.Artist{}}
@@ -64,6 +120,7 @@ func (s *Service) GetRecommendations(ctx context.Context, userID, lang string) *
 
 	userOK := strings.TrimSpace(userID) != "" && s.spotify != nil
 	if !userOK {
+		s.storeRecommendations(key, legacy)
 		return legacy
 	}
 
@@ -74,14 +131,19 @@ func (s *Service) GetRecommendations(ctx context.Context, userID, lang string) *
 	hist, _ := s.history.List(ctx, userID, 1)
 	hasHistory := len(hist) > 0
 	if !isOnboarded && !hasHistory {
+		s.storeRecommendations(key, legacy)
 		return legacy
 	}
 
 	deps := engine.Deps{Spotify: s.spotify, Music: s.music, History: s.history, Prefs: s.prefs}
 	eng, err := engine.Run(ctx, &deps, userID, lang)
 	if err != nil || eng == nil || len(eng.Tracks) == 0 {
+		s.storeRecommendations(key, legacy)
 		return legacy
 	}
+	s.storeRecommendations(key, eng)
+	log.Printf("[recommend-cache] miss-stored user=%s lang=%s tracks=%d albums=%d artists=%d ttl=%s",
+		userID, lang, len(eng.Tracks), len(eng.Albums), len(eng.Artists), recommendationsCacheTTL)
 	return eng
 }
 
@@ -297,11 +359,18 @@ func (s *Service) legacyGetRecommendations(ctx context.Context, userID, lang str
 	seenAlbum := map[string]bool{}
 	seenArtist := map[string]bool{}
 
+	// Bound each per-provider Search so a single hung provider can't make the
+	// whole feed feel "stuck" or push downstream into the proxy's request
+	// timeout. Choose 8s — long enough for cold Spotify token renew, short
+	// enough that the user notices a fast feed even on a partial failure.
+	searchCtx, cancelSearch := context.WithTimeout(ctx, 8*time.Second)
+	defer cancelSearch()
+
 	for _, q := range queries {
 		wg.Add(1)
 		go func(query string) {
 			defer wg.Done()
-			res := s.music.Search(ctx, query, 10, "")
+			res := s.music.Search(searchCtx, query, 10, "")
 			if res == nil {
 				return
 			}
