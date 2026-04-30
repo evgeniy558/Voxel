@@ -73,7 +73,7 @@ func main() {
 	var spotifyRef *provider.Spotify
 	var providers []provider.MusicProvider
 	if cfg.SpotifyClientID != "" {
-		sp := provider.NewSpotify(cfg.SpotifyClientID, cfg.SpotifySecret)
+		sp := provider.NewSpotifyWithCreds(cfg.SpotifyClientID, cfg.SpotifySecret, cfg.SpotifyUsername, cfg.SpotifyPassword, cfg.SpotifyCredsBlob)
 		spotifyRef = sp
 		providers = append(providers, sp)
 	}
@@ -85,7 +85,7 @@ func main() {
 	musicSvc := music.NewService(providers...)
 	music.SetGeniusToken(cfg.GeniusToken)
 	prefsSvc := preferences.NewService(pool)
-	recommendSvc := recommend.NewService(historySvc, musicSvc, prefsSvc, spotifyRef)
+	recommendSvc := recommend.NewService(historySvc, musicSvc, prefsSvc, favSvc, spotifyRef)
 	commentsSvc, err := comments.NewService(pool, cfg)
 	if err != nil {
 		log.Fatal("comments init: ", err)

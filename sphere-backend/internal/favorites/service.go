@@ -80,3 +80,35 @@ func (s *Service) Delete(ctx context.Context, userID, id string) error {
 	}
 	return nil
 }
+
+// TopArtists returns the most-saved artist names for a user (any item type).
+func (s *Service) TopArtists(ctx context.Context, userID string, n int) ([]string, error) {
+	if n <= 0 {
+		n = 5
+	}
+	rows, err := s.db.Query(ctx,
+		`SELECT TRIM(artist_name) AS a, COUNT(*) AS c
+		   FROM favorites
+		  WHERE user_id = $1 AND COALESCE(TRIM(artist_name), '') <> ''
+		  GROUP BY TRIM(artist_name)
+		  ORDER BY c DESC
+		  LIMIT $2`,
+		userID, n,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("top favorite artists: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var a string
+		var c int
+		if err := rows.Scan(&a, &c); err != nil {
+			return nil, err
+		}
+		if a != "" {
+			out = append(out, a)
+		}
+	}
+	return out, nil
+}

@@ -136,19 +136,28 @@ func (s *Service) LastSpotifyTrackID(ctx context.Context, userID string) (string
 	return id, nil
 }
 
-// TrendingTracks returns globally most-played tracks in the last 7 days (non-skipped).
-func (s *Service) TrendingTracks(ctx context.Context, limit int) ([]TrackKey, error) {
-	if limit <= 0 {
-		limit = 30
+// SkipProneTracks returns tracks the user frequently skips (high skip ratio).
+func (s *Service) SkipProneTracks(ctx context.Context, userID string, days int, minPlays int, skipThreshold float64) ([]TrackKey, error) {
+	if days <= 0 {
+		days = 60
+	}
+	if minPlays < 1 {
+		minPlays = 2
+	}
+	if skipThreshold <= 0 || skipThreshold > 1 {
+		skipThreshold = 0.6
 	}
 	rows, err := s.db.Query(ctx,
-		`SELECT provider, track_id, title, artist, COUNT(*) AS c
+		`SELECT provider, track_id, MAX(title), MAX(artist)
 		   FROM listen_history
-		  WHERE listened_at > now() - interval '7 days' AND COALESCE(skipped, false) = false
-		  GROUP BY provider, track_id, title, artist
-		  ORDER BY c DESC
-		  LIMIT $1`,
-		limit,
+		  WHERE user_id = $1
+		    AND listened_at > now() - ($2::int * interval '1 day')
+		  GROUP BY provider, track_id
+		 HAVING COUNT(*) > $3
+		    AND AVG(CASE WHEN COALESCE(skipped, false) THEN 1.0 ELSE 0.0 END) > $4::double precision
+		  ORDER BY COUNT(*) DESC
+		  LIMIT 200`,
+		userID, days, minPlays, skipThreshold,
 	)
 	if err != nil {
 		return nil, err
@@ -157,8 +166,7 @@ func (s *Service) TrendingTracks(ctx context.Context, limit int) ([]TrackKey, er
 	var out []TrackKey
 	for rows.Next() {
 		var k TrackKey
-		var c int
-		if err := rows.Scan(&k.Provider, &k.TrackID, &k.Title, &k.Artist, &c); err != nil {
+		if err := rows.Scan(&k.Provider, &k.TrackID, &k.Title, &k.Artist); err != nil {
 			continue
 		}
 		out = append(out, k)

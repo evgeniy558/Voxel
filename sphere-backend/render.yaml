@@ -74,6 +74,14 @@ services:
         sync: false
       - key: SPOTIFY_CLIENT_SECRET
         sync: false
+      # Optional: Spotify full-track audio via Connect credentials.
+      # Recommended: set SPOTIFY_CREDS_BLOB (base64 of go-librespot credentials/state json).
+      - key: SPOTIFY_USERNAME
+        sync: false
+      - key: SPOTIFY_PASSWORD
+        sync: false
+      - key: SPOTIFY_CREDS_BLOB
+        sync: false
       - key: SOUNDCLOUD_CLIENT_ID
         sync: false
       - key: SOUNDCLOUD_CLIENT_SECRET

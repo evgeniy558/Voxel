@@ -26,6 +26,8 @@ type Spotify struct {
 	httpClient   *http.Client
 
 	monthlyListenersCache sync.Map // map[string]spotifyMonthlyListenersCacheEntry
+
+	stream *SpotifyStream
 }
 
 type spotifyMonthlyListenersCacheEntry struct {
@@ -41,7 +43,24 @@ func NewSpotify(clientID, clientSecret string) *Spotify {
 	}
 }
 
+// NewSpotifyWithCreds enables optional full-track streaming via Spotify Connect
+// credentials. The normal Web API client credentials are still used for search
+// + metadata.
+func NewSpotifyWithCreds(clientID, clientSecret, username, password, credsBlob string) *Spotify {
+	sp := NewSpotify(clientID, clientSecret)
+	sp.stream = NewSpotifyStream(username, password, credsBlob)
+	return sp
+}
+
 func (s *Spotify) Name() string { return "spotify" }
+
+func (s *Spotify) HasFullTrackSession() bool { return s.stream != nil && s.stream.HasSession() }
+func (s *Spotify) FullTrackSession() *SpotifyStream {
+	if s.stream == nil {
+		return nil
+	}
+	return s.stream
+}
 
 func (s *Spotify) getToken(ctx context.Context) (string, error) {
 	s.mu.Lock()
@@ -158,11 +177,15 @@ func (s *Spotify) GetTrack(ctx context.Context, id string) (*model.Track, error)
 }
 
 func (s *Spotify) GetTrackStreamURL(ctx context.Context, id string) (string, error) {
-	t, err := s.GetTrack(ctx, id)
-	if err != nil {
-		return "", err
+	// Spotify Web API does not provide full-track streams (preview_url is often empty).
+	// When full Spotify streaming isn't configured, force the music.Service fallback
+	// (YouTube/SoundCloud). When it *is* configured, the HTTP handler uses a
+	// spotify-specific proxy path to stream CDN bytes, so we still return an error
+	// here to avoid leaking expiring CDN URLs.
+	if s.stream != nil && s.stream.HasSession() {
+		return "", fmt.Errorf("spotify stream must be proxied")
 	}
-	return t.PreviewURL, nil
+	return "", fmt.Errorf("spotify stream not available")
 }
 
 func (s *Spotify) GetLyrics(_ context.Context, _ string) (*model.Lyrics, error) {

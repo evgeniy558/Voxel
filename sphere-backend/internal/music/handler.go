@@ -98,6 +98,16 @@ func (h *Handler) ProxyStream(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	quality := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("quality")))
 
+	// Spotify special-case: full-track audio requires Connect credentials and
+	// returns OGG that must be proxied (expiring CDN URLs + AES-CTR decrypt).
+	if prov == "spotify" {
+		if sp := h.svc.SpotifyProvider(); sp != nil && sp.HasFullTrackSession() {
+			if h.proxySpotify(w, r, sp, id, quality) {
+				return
+			}
+		}
+	}
+
 	// Deezer special-case: full-track audio comes back encrypted with
 	// BF_CBC_STRIPE, so we MUST proxy + decrypt server-side. Falls through to
 	// the normal stream resolver below if the ARL is not configured.
@@ -125,6 +135,60 @@ func (h *Handler) ProxyStream(w http.ResponseWriter, r *http.Request) {
 	// SoundCloud (and others with a direct CDN URL): 302 so AVPlayer buffers from origin
 	// instead of a byte-streaming proxy (fixes choppy playback on Simulator / some networks).
 	http.Redirect(w, r, streamURL, http.StatusTemporaryRedirect)
+}
+
+// proxySpotify streams a full-length Spotify track as decrypted OGG bytes.\n+// Returns true when the response was handled (success or definitive error).\n+func (h *Handler) proxySpotify(w http.ResponseWriter, r *http.Request, sp *provider.Spotify, trackID, quality string) bool {\n+\t// ladder in kbps\n+\tvar ladder []int\n+\tswitch quality {\n+\tcase \"high\", \"320\", \"ogg_320\":\n+\t\tladder = []int{320, 160, 96}\n+\tcase \"low\", \"96\", \"ogg_96\":\n+\t\tladder = []int{96}\n+\tdefault:\n+\t\tladder = []int{160, 320, 96}\n+\t}\n+\n+\tsess := sp.FullTrackSession()\n+\tif sess == nil {\n+\t\treturn false\n+\t}\n+\n+\tvar (\n+\t\treader io.ReadCloser\n+\t\tsize   int64\n+\t\tfmtStr string\n+\t\tlastErr error\n+\t)\n+\tfor _, br := range ladder {\n+\t\trc, sz, format, err := sess.ResolveDecryptedStream(r.Context(), trackID, br)\n+\t\tif err == nil && rc != nil {\n+\t\t\treader = rc\n+\t\t\tsize = sz\n+\t\t\tswitch format {\n+\t\t\tcase 0:\n+\t\t\t\tfmtStr = \"unknown\"\n+\t\t\tdefault:\n+\t\t\t\tfmtStr = format.String()\n+\t\t\t}\n+\t\t\tbreak\n+\t\t}\n+\t\tlastErr = err\n+\t}\n+\tif reader == nil {\n+\t\tlog.Printf(\"[spotify-stream] resolve %s ladder=%v failed: %v — falling back\", trackID, ladder, lastErr)\n+\t\treturn false\n+\t}\n+\tdefer reader.Close()\n+\n+\tw.Header().Set(\"Content-Type\", \"audio/ogg\")\n+\tw.Header().Set(\"Cache-Control\", \"private, max-age=3600\")\n+\tw.Header().Set(\"X-Sphere-Audio-Quality\", fmtStr)\n+\tif size > 0 {\n+\t\tw.Header().Set(\"Content-Length\", strconv.FormatInt(size, 10))\n+\t}\n+\tw.WriteHeader(http.StatusOK)\n+\tlog.Printf(\"[spotify-stream] %s ok format=%s size=%d requested=%q\", trackID, fmtStr, size, quality)\n+\n+\t_, _ = io.Copy(w, reader)\n+\treturn true\n+}\n+\n*** End Patch"}"}}
+// proxySpotify streams a full-length Spotify track as decrypted OGG bytes.
+// Returns true when the response was handled (success or definitive error).
+func (h *Handler) proxySpotify(w http.ResponseWriter, r *http.Request, sp *provider.Spotify, trackID, quality string) bool {
+	var ladder []int
+	switch quality {
+	case "high", "320", "ogg_320":
+		ladder = []int{320, 160, 96}
+	case "low", "96", "ogg_96":
+		ladder = []int{96}
+	default:
+		ladder = []int{160, 320, 96}
+	}
+
+	sess := sp.FullTrackSession()
+	if sess == nil {
+		return false
+	}
+
+	var (
+		reader  io.ReadCloser
+		size    int64
+		fmtStr  string
+		lastErr error
+	)
+	for _, br := range ladder {
+		rc, sz, format, err := sess.ResolveDecryptedStream(r.Context(), trackID, br)
+		if err == nil && rc != nil {
+			reader = rc
+			size = sz
+			fmtStr = format.String()
+			break
+		}
+		lastErr = err
+	}
+	if reader == nil {
+		log.Printf("[spotify-stream] resolve %s ladder=%v failed: %v — falling back", trackID, ladder, lastErr)
+		return false
+	}
+	defer reader.Close()
+
+	w.Header().Set("Content-Type", "audio/ogg")
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.Header().Set("X-Sphere-Audio-Quality", fmtStr)
+	if size > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	}
+	w.WriteHeader(http.StatusOK)
+	log.Printf("[spotify-stream] %s ok format=%s size=%d requested=%q", trackID, fmtStr, size, quality)
+
+	_, _ = io.Copy(w, reader)
+	return true
 }
 
 // proxyDeezer streams a full-length Deezer track, decrypting BF_CBC_STRIPE

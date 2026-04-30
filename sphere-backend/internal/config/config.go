@@ -28,6 +28,11 @@ type Config struct {
 	S3Bucket         string
 	SpotifyClientID  string
 	SpotifySecret    string
+	// Spotify streaming (optional): if set, backend can stream full Spotify tracks
+	// via a stored blob credential (recommended) or username/password (fallback).
+	SpotifyUsername  string
+	SpotifyPassword  string
+	SpotifyCredsBlob string
 	SoundCloudID     string
 	SoundCloudSecret string
 	VKToken          string
@@ -54,6 +59,9 @@ func Load() (*Config, error) {
 		S3Bucket:         getEnv("S3_BUCKET", "sphere-uploads"),
 		SpotifyClientID:  getEnv("SPOTIFY_CLIENT_ID", "57bb83e1ba584118ab3b8970e817dee4"),
 		SpotifySecret:    getEnv("SPOTIFY_CLIENT_SECRET", "7073d08c99a34fc1abe3bcb5b2c08c1f"),
+		SpotifyUsername:  getEnv("SPOTIFY_USERNAME", ""),
+		SpotifyPassword:  getEnv("SPOTIFY_PASSWORD", ""),
+		SpotifyCredsBlob: getEnv("SPOTIFY_CREDS_BLOB", ""),
 		SoundCloudID:     getEnv("SOUNDCLOUD_CLIENT_ID", "iuspDvaXDbD3AnFwLWK56Fk69q56xsKu"),
 		SoundCloudSecret: getEnv("SOUNDCLOUD_CLIENT_SECRET", ""),
 		VKToken:          getEnv("VK_SERVICE_TOKEN", "vk1.a.lm-8un_JtuwYfdPCboRYr_ZNPTisJlaSDrM4bDy_BAB_x_e5B8ytHmJxslmsTro0fgcz3DaiWOz_WzjlTAEdY0cwh2G4ybY9pda1-MDYEPzvu2XWUAqOR7vWwM7cFPGb7oCbSr-0jJih5Jx2BJQilc5yrEy5MuHcqNvdMo9TZMh_R0e9W7k60IQP-Cl2g9dIJHTJjvY69hox6lqx8_7nYg"),

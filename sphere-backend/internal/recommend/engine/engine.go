@@ -1,5 +1,5 @@
-// Package engine implements preference-driven recommendations (artist/genre seeds,
-// related artists, peer-influenced signal, audio-features scoring, Daily Mixes).
+// Package engine implements preference-driven recommendations (seed builder,
+// collaborative filter, per-provider quota, audio-features sequence scoring).
 package engine
 
 import (
@@ -9,8 +9,10 @@ import (
 	"math/rand"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
+	"sphere-backend/internal/favorites"
 	"sphere-backend/internal/history"
 	"sphere-backend/internal/model"
 	"sphere-backend/internal/music"
@@ -20,271 +22,170 @@ import (
 
 // Deps is wired from cmd/server.
 type Deps struct {
-	Spotify *provider.Spotify
-	Music   *music.Service
-	History *history.Service
-	Prefs   *preferences.Service
+	Spotify   *provider.Spotify
+	Music     *music.Service
+	History   *history.Service
+	Prefs     *preferences.Service
+	Favorites *favorites.Service
 }
 
-// spotifySafeGenre maps app genre labels to valid Spotify seed_genres.
-var spotifySafeGenre = map[string]string{
-	"Pop":         "pop",
-	"Rock":        "rock",
-	"Hip-Hop":     "hip-hop",
-	"R&B":         "r-n-b",
-	"Electronic":  "electronic",
-	"Jazz":        "jazz",
-	"Classical":   "classical",
-	"Metal":       "metal",
-	"Indie":       "indie",
-	"K-Pop":       "k-pop",
-	"Latin":       "latin",
-	"Country":     "country",
-	"Reggaeton":   "reggaeton",
-	"Punk":        "punk",
-	"Lo-Fi":       "sleep",
-	"Dance":       "dance",
-	"Soul":        "soul",
-	"Folk":        "folk",
-	"Blues":       "blues",
-	"Русский рэп": "hip-hop",
-	"Поп":         "pop",
-	"Рок":         "rock",
+// providerOrder is used for round-robin quota filling across catalog sources.
+var providerOrder = []string{"spotify", "deezer", "youtube", "soundcloud"}
+
+// seedGenreExpand maps onboarding genre labels to neutral search terms (no “hits / trending”).
+var seedGenreExpand = map[string][]string{
+	"Pop":         {"dance pop", "synth pop", "indie pop"},
+	"Rock":        {"rock", "alternative rock", "indie rock"},
+	"Hip-Hop":     {"hip hop", "rap", "trap"},
+	"R&B":         {"r&b", "soul", "neo soul"},
+	"Electronic":  {"electronic", "edm", "house music"},
+	"Jazz":        {"jazz", "smooth jazz", "jazz fusion"},
+	"Classical":   {"classical", "piano classical", "orchestra"},
+	"Metal":       {"metal", "heavy metal", "metalcore"},
+	"Indie":       {"indie", "indie pop", "indie folk"},
+	"K-Pop":       {"k-pop", "korean pop"},
+	"Latin":       {"latin", "reggaeton", "latin pop"},
+	"Country":     {"country", "country pop", "americana"},
+	"Reggaeton":   {"reggaeton", "latin trap", "dembow"},
+	"Lo-Fi":       {"lo-fi", "lofi hip hop", "chill beats"},
+	"Punk":        {"punk rock", "pop punk", "punk"},
+	"Русский рэп": {"русский рэп", "российский хип-хоп", "рэп"},
+	"Поп":         {"русский поп", "поп музыка"},
+	"Рок":         {"русский рок", "рок музыка"},
 }
 
-// Run builds personalized /recommendations when Spotify is configured.
+const (
+	maxSeedQueries   = 48
+	searchPerQuery   = 12
+	searchTimeout    = 8 * time.Second
+	targetTrackCount = 30
+)
+
+// Run builds personalized /recommendations using multi-provider search + collaborative filter.
 func Run(ctx context.Context, d *Deps, userID, lang string) (*model.RecommendationFeed, error) {
-	if d == nil || d.Spotify == nil {
-		return nil, errors.New("no spotify")
+	if d == nil || d.Music == nil {
+		return nil, errors.New("no music service")
 	}
 	isRU := strings.Contains(strings.ToLower(lang), "ru")
-	market := "US"
-	if isRU {
-		market = "RU"
-	}
-	pref, _ := d.Prefs.Get(ctx, userID)
 
-	var artistNames []string
-	if pref != nil && pref.OnboardingCompleted {
-		artistNames = append(artistNames, pref.SelectedArtists...)
+	queries := buildSearchQueries(ctx, d, userID, isRU)
+	if len(queries) == 0 {
+		return nil, errors.New("no seed queries")
 	}
-	if len(artistNames) < 2 {
-		top, _ := d.History.TopArtists(ctx, userID, 5)
-		artistNames = append(artistNames, top...)
-	}
-	if len(artistNames) == 0 {
-		if isRU {
-			artistNames = []string{"Miyagi", "Scriptonite"}
-		} else {
-			artistNames = []string{"The Weeknd", "Taylor Swift"}
+
+	skipKeys, _ := d.History.SkipProneTracks(ctx, userID, 60, 2, 0.6)
+	skipSet := make(map[string]struct{}, len(skipKeys))
+	for _, k := range skipKeys {
+		if k.Provider != "" && k.TrackID != "" {
+			skipSet[k.Provider+":"+k.TrackID] = struct{}{}
 		}
 	}
 
-	const maxSpotifyRecBatches = 10
-	const maxResolvedSeeds = 16
+	searchCtx, cancelSearch := context.WithTimeout(ctx, searchTimeout)
+	defer cancelSearch()
 
-	seedArtists := make([]string, 0, maxResolvedSeeds)
-	seenA := map[string]struct{}{}
-	for _, name := range artistNames {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
-		if len(seedArtists) >= maxResolvedSeeds {
-			break
-		}
-		id, err := d.Spotify.ResolveArtistID(ctx, name)
-		if err != nil {
-			continue
-		}
-		if _, ok := seenA[id]; ok {
-			continue
-		}
-		seenA[id] = struct{}{}
-		seedArtists = append(seedArtists, id)
-	}
-	if len(seedArtists) < 1 {
-		return nil, errors.New("could not resolve artist seeds")
-	}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	trackPool := make([]model.Track, 0, 256)
 
-	seedGenres := make([]string, 0, 16)
-	seenG := map[string]struct{}{}
-	if pref != nil {
-		for _, g := range pref.SelectedGenres {
-			sg, ok := spotifySafeGenre[g]
-			if !ok {
-				continue
+	for _, q := range queries {
+		q := q
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			res := d.Music.Search(searchCtx, q, searchPerQuery, "")
+			if res == nil {
+				return
 			}
-			if _, dup := seenG[sg]; dup {
-				continue
-			}
-			seenG[sg] = struct{}{}
-			seedGenres = append(seedGenres, sg)
-		}
-	}
-	if len(seedGenres) < 1 {
-		seedGenres = append(seedGenres, "pop", "dance")
-	}
-
-	trackList := make([]model.Track, 0, 120)
-	// Tracks: preference-driven pool only.
-	// 1) Top tracks for the selected artists.
-	topN := 8
-	if len(seedArtists) < topN {
-		topN = len(seedArtists)
-	}
-	for i := 0; i < topN; i++ {
-		n := 4
-		if i == 0 {
-			n = 6
-		}
-		appendArtistTop(ctx, d.Spotify, &trackList, seedArtists[i], market, n)
-	}
-
-	// Related: take top tracks from a few related artists per seed (capped to limit Spotify calls).
-	relN := 2
-	if len(seedArtists) < relN {
-		relN = len(seedArtists)
-	}
-	for si := 0; si < relN; si++ {
-		if rel, err := d.Spotify.GetRelatedArtists(ctx, seedArtists[si]); err == nil {
-			for i, a := range rel {
-				if i >= 4 {
-					break
-				}
-				appendArtistTop(ctx, d.Spotify, &trackList, a.ID, market, 2)
-			}
-		}
-	}
-
-	// 2) Genre fill via search (fallback to ensure variety; still preference-driven).
-	for _, g := range seedGenres {
-		if strings.TrimSpace(g) == "" {
-			continue
-		}
-		// We intentionally avoid global "hits/trending" queries here.
-		if res := d.Music.Search(ctx, g, 8, "spotify"); res != nil {
+			mu.Lock()
+			defer mu.Unlock()
 			for _, t := range res.Tracks {
-				if t.CoverURL == "" {
+				if strings.TrimSpace(t.CoverURL) == "" {
 					continue
 				}
-				trackList = append(trackList, t)
-				if len(trackList) >= 140 {
-					break
+				key := t.Provider + ":" + t.ID
+				if _, bad := skipSet[key]; bad {
+					continue
 				}
+				trackPool = append(trackPool, t)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if peers, err := d.History.PeerInfluencedTracks(ctx, userID, 20); err == nil {
+		trackPool = appendKeys(ctx, d.Music, trackPool, peers)
+		for _, k := range peers {
+			if k.Provider != "" && k.TrackID != "" {
+				delete(skipSet, k.Provider+":"+k.TrackID)
 			}
 		}
-		if len(trackList) >= 140 {
-			break
+	}
+
+	trackPool = filterSkipSet(trackPool, skipSet)
+	trackPool = uniqueTracks(trackPool)
+	trackPool = dedupeByArtistTitle(trackPool)
+
+	primaryGenre := "pop"
+	if pref, _ := d.Prefs.Get(ctx, userID); pref != nil && len(pref.SelectedGenres) > 0 {
+		if sg, ok := spotifySafeGenre[pref.SelectedGenres[0]]; ok {
+			primaryGenre = sg
 		}
 	}
 
-	// Collaborative (peer-influenced only; no global trending).
-	if peers, err := d.History.PeerInfluencedTracks(ctx, userID, 15); err == nil {
-		trackList = appendKeys(ctx, d.Music, trackList, peers)
+	if d.Spotify != nil {
+		trackPool = sortBySpotifyAudioScore(ctx, d.Spotify, trackPool, primaryGenre)
 	}
+	trackPool = fillByProviderQuota(trackPool, targetTrackCount)
 
-	trackList = uniqueTracks(trackList)
-	trackList = sortBySpotifyAudioScore(ctx, d.Spotify, trackList, seedGenres[0])
-	trackList = capAndDedupeCovers(trackList, 30)
+	// Final cover-dedupe cap (unique artwork rail)
+	trackList := capAndDedupeCovers(trackPool, targetTrackCount)
 
-	// Albums: search per artist
-	albums := make([]model.Album, 0, 15)
+	albums := buildAlbumArtistRails(ctx, d, queries[:minInt(12, len(queries))])
+
+	return &model.RecommendationFeed{
+		Tracks:  trackList,
+		Albums:  albums.albums,
+		Artists: albums.artists,
+	}, nil
+}
+
+type albumArtistRails struct {
+	albums  []model.Album
+	artists []model.Artist
+}
+
+func buildAlbumArtistRails(ctx context.Context, d *Deps, queries []string) albumArtistRails {
+	out := albumArtistRails{
+		albums:  make([]model.Album, 0, 20),
+		artists: make([]model.Artist, 0, 20),
+	}
 	albumSeen := map[string]struct{}{}
-	for _, a := range artistNames {
-		if len(albums) >= 15 {
-			break
-		}
-		a = strings.TrimSpace(a)
-		if a == "" {
-			continue
-		}
-		res := d.Music.Search(ctx, a+" album", 4, "spotify")
-		if res == nil {
-			continue
-		}
-		for _, al := range res.Albums {
-			k := al.Provider + ":" + al.ID
-			if _, ok := albumSeen[k]; ok {
-				continue
-			}
-			if al.CoverURL == "" {
-				continue
-			}
-			albumSeen[k] = struct{}{}
-			albums = append(albums, al)
-			if len(albums) >= 15 {
-				break
-			}
-		}
-	}
-	if len(albums) < 5 {
-		for _, g := range seedGenres {
-			if len(albums) >= 15 {
-				break
-			}
-			g = strings.TrimSpace(g)
-			if g == "" {
-				continue
-			}
-			res := d.Music.Search(ctx, g+" album", 6, "spotify")
+	artistSeen := map[string]struct{}{}
+
+	sctx, cancel := context.WithTimeout(ctx, searchTimeout)
+	defer cancel()
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, q := range queries {
+		q := q
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			res := d.Music.Search(sctx, q, 10, "")
 			if res == nil {
-				continue
+				return
 			}
+			mu.Lock()
+			defer mu.Unlock()
 			for _, al := range res.Albums {
 				k := al.Provider + ":" + al.ID
-				if _, ok := albumSeen[k]; ok {
-					continue
-				}
-				if al.CoverURL == "" {
+				if _, ok := albumSeen[k]; ok || al.CoverURL == "" {
 					continue
 				}
 				albumSeen[k] = struct{}{}
-				albums = append(albums, al)
-				if len(albums) >= 15 {
-					break
-				}
-			}
-		}
-	}
-
-	// Artist rail: related from several seeds, then name search (not just the first pick).
-	artists := make([]model.Artist, 0, 15)
-	artistSeen := map[string]struct{}{}
-	relSeedsN := 3
-	if len(seedArtists) < relSeedsN {
-		relSeedsN = len(seedArtists)
-	}
-	for si := 0; si < relSeedsN; si++ {
-		if rel, err := d.Spotify.GetRelatedArtists(ctx, seedArtists[si]); err == nil {
-			for i, a := range rel {
-				if i >= 4 {
-					break
-				}
-				k := a.Provider + ":" + a.ID
-				if _, ok := artistSeen[k]; ok || a.ImageURL == "" {
-					continue
-				}
-				artistSeen[k] = struct{}{}
-				artists = append(artists, a)
-				if len(artists) >= 15 {
-					break
-				}
-			}
-		}
-		if len(artists) >= 12 {
-			break
-		}
-	}
-	if len(artists) < 5 {
-		for _, an := range artistNames {
-			an = strings.TrimSpace(an)
-			if an == "" {
-				continue
-			}
-			res := d.Music.Search(ctx, an, 5, "spotify")
-			if res == nil {
-				continue
+				out.albums = append(out.albums, al)
 			}
 			for _, a := range res.Artists {
 				k := a.Provider + ":" + a.ID
@@ -292,40 +193,216 @@ func Run(ctx context.Context, d *Deps, userID, lang string) (*model.Recommendati
 					continue
 				}
 				artistSeen[k] = struct{}{}
-				artists = append(artists, a)
-				if len(artists) >= 15 {
+				out.artists = append(out.artists, a)
+			}
+		}()
+	}
+	wg.Wait()
+
+	out.albums = fillByProviderQuotaGeneric(out.albums, func(a model.Album) string { return a.Provider }, 15)
+	out.artists = fillByProviderQuotaGeneric(out.artists, func(a model.Artist) string { return a.Provider }, 15)
+	return out
+}
+
+func buildSearchQueries(ctx context.Context, d *Deps, userID string, isRU bool) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return
+		}
+		key := strings.ToLower(s)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, s)
+	}
+
+	pref, _ := d.Prefs.Get(ctx, userID)
+	if pref != nil && pref.OnboardingCompleted {
+		for _, a := range pref.SelectedArtists {
+			a = strings.TrimSpace(a)
+			if a == "" {
+				continue
+			}
+			add(a)
+			add(a + " album")
+		}
+		for _, g := range pref.SelectedGenres {
+			if terms, ok := seedGenreExpand[g]; ok {
+				for _, t := range terms {
+					add(t)
+				}
+			} else {
+				add(g)
+			}
+		}
+	}
+
+	if tops, _ := d.History.TopArtists(ctx, userID, 6); len(tops) > 0 {
+		for _, a := range tops {
+			add(a)
+		}
+	}
+	if tg, _ := d.History.TopGenres(ctx, userID, 5); len(tg) > 0 {
+		for _, g := range tg {
+			add(g)
+		}
+	}
+	if d.Favorites != nil {
+		if favs, _ := d.Favorites.TopArtists(ctx, userID, 6); len(favs) > 0 {
+			for _, a := range favs {
+				add(a)
+			}
+		}
+	}
+
+	// Expand seeds with related artist names only (metadata), not “Spotify recommendations” tracks.
+	if d.Spotify != nil && pref != nil && len(pref.SelectedArtists) > 0 {
+		for i, name := range pref.SelectedArtists {
+			if i >= 2 || len(out) >= maxSeedQueries {
+				break
+			}
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			id, err := d.Spotify.ResolveArtistID(ctx, name)
+			if err != nil {
+				continue
+			}
+			rel, err := d.Spotify.GetRelatedArtists(ctx, id)
+			if err != nil {
+				continue
+			}
+			for j, a := range rel {
+				if j >= 4 || len(out) >= maxSeedQueries {
+					break
+				}
+				add(a.Name)
+			}
+		}
+	}
+
+	if len(out) == 0 {
+		neutralEN := []string{"indie rock", "electronic music", "jazz", "hip hop", "synth pop", "alternative rock", "soul music", "neo soul"}
+		neutralRU := []string{"инди рок", "электронная музыка", "джаз", "хип-хоп", "синт-поп", "альтернативный рок", "русский рэп", "соул"}
+		list := neutralEN
+		if isRU {
+			list = neutralRU
+		}
+		for _, q := range list {
+			add(q)
+		}
+	}
+
+	if len(out) > maxSeedQueries {
+		out = out[:maxSeedQueries]
+	}
+	return out
+}
+
+func filterSkipSet(in []model.Track, skip map[string]struct{}) []model.Track {
+	if len(skip) == 0 {
+		return in
+	}
+	out := in[:0]
+	for _, t := range in {
+		k := t.Provider + ":" + t.ID
+		if _, bad := skip[k]; bad {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+func dedupeByArtistTitle(in []model.Track) []model.Track {
+	seen := map[string]struct{}{}
+	out := make([]model.Track, 0, len(in))
+	for _, t := range in {
+		ka := strings.ToLower(strings.TrimSpace(t.Artist))
+		kt := strings.ToLower(strings.TrimSpace(t.Title))
+		if ka == "" || kt == "" {
+			out = append(out, t)
+			continue
+		}
+		key := ka + "|" + kt
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, t)
+	}
+	return out
+}
+
+func fillByProviderQuota(tracks []model.Track, target int) []model.Track {
+	return fillByProviderQuotaGeneric(tracks, func(t model.Track) string { return t.Provider }, target)
+}
+
+func fillByProviderQuotaGeneric[T any](items []T, providerFn func(T) string, target int) []T {
+	if len(items) == 0 || target <= 0 {
+		return nil
+	}
+	buckets := make(map[string][]T)
+	for _, it := range items {
+		p := strings.TrimSpace(providerFn(it))
+		if p == "" {
+			p = "_"
+		}
+		buckets[p] = append(buckets[p], it)
+	}
+
+	out := make([]T, 0, target)
+	for len(out) < target {
+		progress := false
+		for _, p := range providerOrder {
+			if len(buckets[p]) > 0 {
+				out = append(out, buckets[p][0])
+				buckets[p] = buckets[p][1:]
+				progress = true
+				if len(out) >= target {
 					break
 				}
 			}
-			if len(artists) >= 12 {
-				break
+		}
+		if !progress {
+			break
+		}
+	}
+	// Deterministic pass: known providers, then any extra provider keys.
+	if len(out) < target {
+		for _, p := range providerOrder {
+			for len(buckets[p]) > 0 && len(out) < target {
+				out = append(out, buckets[p][0])
+				buckets[p] = buckets[p][1:]
 			}
 		}
 	}
-	artists = capSlice(artists, 15)
-
-	return &model.RecommendationFeed{
-		Tracks:  trackList,
-		Albums:  albums,
-		Artists: artists,
-	}, nil
+	if len(out) < target {
+		for p, b := range buckets {
+			_ = p
+			for len(b) > 0 && len(out) < target {
+				out = append(out, b[0])
+				b = b[1:]
+			}
+			buckets[p] = b
+		}
+	}
+	return out
 }
 
-func appendArtistTop(ctx context.Context, sp *provider.Spotify, out *[]model.Track, artistID, market string, n int) []model.Track {
-	if market == "" {
-		market = "US"
-	}
-	top, err := sp.GetArtistTopTracks(ctx, artistID, market)
-	if err != nil {
-		return *out
-	}
-	for i, t := range top {
-		if i >= n {
-			break
-		}
-		*out = append(*out, t)
-	}
-	return *out
+// spotifySafeGenre maps app genre labels to Spotify seed_genres (audio-features only).
+var spotifySafeGenre = map[string]string{
+	"Pop": "pop", "Rock": "rock", "Hip-Hop": "hip-hop", "R&B": "r-n-b",
+	"Electronic": "electronic", "Jazz": "jazz", "Classical": "classical", "Metal": "metal",
+	"Indie": "indie", "K-Pop": "k-pop", "Latin": "latin", "Country": "country",
+	"Reggaeton": "reggaeton", "Punk": "punk", "Lo-Fi": "sleep", "Dance": "dance",
+	"Soul": "soul", "Folk": "folk", "Blues": "blues",
+	"Русский рэп": "hip-hop", "Поп": "pop", "Рок": "rock",
 }
 
 func appendKeys(ctx context.Context, m *music.Service, cur []model.Track, keys []history.TrackKey) []model.Track {
@@ -428,7 +505,6 @@ func capAndDedupeCovers(in []model.Track, max int) []model.Track {
 		}
 	}
 	if len(out) < max/2 && len(in) > 0 {
-		// not enough unique covers — return deduped by id only
 		seen2 := map[string]struct{}{}
 		out2 := in[:0:0]
 		for _, t := range in {
@@ -454,10 +530,17 @@ func capSlice[T any](in []T, max int) []T {
 	return in
 }
 
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // DailyMixes returns four scored sequence variants (30 tracks each).
 func DailyMixes(ctx context.Context, d *Deps, userID, lang string) ([]model.DailyMix, error) {
-	if d == nil || d.Spotify == nil {
-		return nil, errors.New("no spotify")
+	if d == nil {
+		return nil, errors.New("no deps")
 	}
 	feed, err := Run(ctx, d, userID, lang)
 	if err != nil {
@@ -471,25 +554,30 @@ func DailyMixes(ctx context.Context, d *Deps, userID, lang string) ([]model.Dail
 		pool = pool[:50]
 	}
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	ids := make([]string, 0, 30)
-	for _, t := range pool {
-		if t.Provider == "spotify" {
-			ids = append(ids, t.ID)
+
+	var feat map[string]model.AudioFeatures
+	if d.Spotify != nil {
+		ids := make([]string, 0, 30)
+		for _, t := range pool {
+			if t.Provider == "spotify" {
+				ids = append(ids, t.ID)
+			}
+		}
+		if len(ids) > 0 {
+			if len(ids) > 100 {
+				ids = ids[:100]
+			}
+			feat, _ = d.Spotify.AudioFeatures(ctx, ids)
 		}
 	}
-	if len(ids) < 5 {
-		return nil, errors.New("not enough spotify tracks for mixes")
-	}
-	feat, _ := d.Spotify.AudioFeatures(ctx, ids)
 
 	mixes := make([]model.DailyMix, 0, 4)
 	for m := 0; m < 4; m++ {
 		seedName := pool[(m*3)%len(pool)].Title
 		variant := make([]model.Track, len(pool))
 		copy(variant, pool)
-		// small shuffle for diversity
 		rng.Shuffle(len(variant), func(i, j int) { variant[i], variant[j] = variant[j], variant[i] })
-		ordered := orderForContinuity(variant, feat)
+		ordered := orderForContinuity(variant, feat, rng)
 		if len(ordered) > 30 {
 			ordered = ordered[:30]
 		}
@@ -513,11 +601,15 @@ func DailyMixes(ctx context.Context, d *Deps, userID, lang string) ([]model.Dail
 	return mixes, nil
 }
 
-func orderForContinuity(tracks []model.Track, feat map[string]model.AudioFeatures) []model.Track {
+func orderForContinuity(tracks []model.Track, feat map[string]model.AudioFeatures, rng *rand.Rand) []model.Track {
 	if len(tracks) <= 1 {
 		return tracks
 	}
-	// Greedy TSP on first track: always pick next with closest energy+tempo
+	if feat == nil || len(feat) == 0 {
+		out := append([]model.Track(nil), tracks...)
+		rng.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
+		return out
+	}
 	remaining := append([]model.Track(nil), tracks...)
 	out := make([]model.Track, 0, len(tracks))
 	out = append(out, remaining[0])
@@ -529,13 +621,13 @@ func orderForContinuity(tracks []model.Track, feat map[string]model.AudioFeature
 		bestScore := 1e9
 		for i, t := range remaining {
 			if last.Provider != "spotify" || t.Provider != "spotify" {
-				bestI = i
+				bestI = rng.Intn(len(remaining))
 				break
 			}
 			fl, oka := feat[last.ID]
 			ft, okb := feat[t.ID]
 			if !oka || !okb {
-				bestI = i
+				bestI = rng.Intn(len(remaining))
 				break
 			}
 			d := absf(fl.Energy-ft.Energy) + absf((fl.Tempo-ft.Tempo)/40)

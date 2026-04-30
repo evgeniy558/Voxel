@@ -39,6 +39,16 @@ func (s *Service) DeezerProvider() *provider.Deezer {
 	return nil
 }
 
+// SpotifyProvider returns the Spotify provider when registered.
+func (s *Service) SpotifyProvider() *provider.Spotify {
+	if p, ok := s.providers["spotify"]; ok {
+		if sp, ok := p.(*provider.Spotify); ok {
+			return sp
+		}
+	}
+	return nil
+}
+
 func (s *Service) Search(ctx context.Context, query string, limit int, providerFilter string) *model.SearchResult {
 	if providerFilter != "" && providerFilter != "all" {
 		if p, ok := s.providers[providerFilter]; ok {

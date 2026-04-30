@@ -1803,16 +1803,18 @@ private struct MainAppView: View {
     private func debouncedCatalogSearch(_ query: String) {
         catalogSearchDebounce?.cancel()
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count >= 2 else {
+        guard !trimmed.isEmpty else {
             catalogSearchResults = nil
             catalogSearchError = nil
             isCatalogSearching = false
             return
         }
         isCatalogSearching = true
+        catalogSearchResults = nil
         catalogSearchError = nil
+        let debounceNs: UInt64 = trimmed.count < 3 ? 600_000_000 : 400_000_000
         catalogSearchDebounce = Task {
-            try? await Task.sleep(nanoseconds: 400_000_000)
+            try? await Task.sleep(nanoseconds: debounceNs)
             guard !Task.isCancelled else { return }
             do {
                 let prov = searchProviderFilter == "all" ? nil : searchProviderFilter
@@ -1836,7 +1838,7 @@ private struct MainAppView: View {
     private func debouncedUserSearch(_ query: String) {
         userSearchDebounce?.cancel()
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count >= 2 else {
+        guard !trimmed.isEmpty else {
             userSearchResults = []
             userSearchError = nil
             isUserSearching = false
@@ -1844,8 +1846,9 @@ private struct MainAppView: View {
         }
         isUserSearching = true
         userSearchError = nil
+        let debounceNs: UInt64 = trimmed.count < 3 ? 600_000_000 : 400_000_000
         userSearchDebounce = Task {
-            try? await Task.sleep(nanoseconds: 400_000_000)
+            try? await Task.sleep(nanoseconds: debounceNs)
             guard !Task.isCancelled else { return }
             do {
                 let res = try await apiClient.searchUsers(query: trimmed, limit: 30)
@@ -6321,7 +6324,19 @@ private struct MainAppView: View {
                     let catalogTracks = catalogSearchResults?.tracks ?? []
                     let catalogArtists = catalogSearchResults?.artists ?? []
                     let catalogAlbums = catalogSearchResults?.albums ?? []
+                    let catalogSearchCompleted = catalogSearchResults != nil
 
+                    if isCatalogSearching && !catalogSearchCompleted {
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .controlSize(.regular)
+                            Text(isEnglish ? "Searching…" : "Поиск…")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 40)
+                    } else {
                     if !localFiltered.isEmpty || !catalogTracks.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(isEnglish ? "Tracks" : "Треки")
@@ -6370,17 +6385,7 @@ private struct MainAppView: View {
                         }
                     }
 
-                    if isCatalogSearching {
-                        VStack(spacing: 12) {
-                            ProgressView()
-                                .controlSize(.regular)
-                            Text(isEnglish ? "Searching…" : "Поиск…")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 40)
-                    } else if let error = catalogSearchError {
+                    if let error = catalogSearchError {
                         VStack(spacing: 12) {
                             Image(systemName: "wifi.exclamationmark")
                                 .font(.system(size: 36))
@@ -6405,12 +6410,13 @@ private struct MainAppView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.top, 40)
-                    } else if localFiltered.isEmpty && catalogTracks.isEmpty && catalogArtists.isEmpty && catalogAlbums.isEmpty {
+                    } else if catalogSearchCompleted && localFiltered.isEmpty && catalogTracks.isEmpty && catalogArtists.isEmpty && catalogAlbums.isEmpty {
                         Text(isEnglish ? "Nothing found" : "Ничего не найдено")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity)
                             .padding(.top, 40)
+                    }
                     }
                 }
             }
