@@ -55,15 +55,28 @@ final class DownloadsStore: ObservableObject {
         defer { inProgress.remove(k) }
 
         try FileManager.default.createDirectory(at: downloadsDir, withIntermediateDirectories: true)
-        let fileName = "\(track.provider)-\(track.id).mp3"
-        let dest = downloadsDir.appendingPathComponent(fileName, isDirectory: false)
 
-        let req = try api.makeDownloadRequest(provider: track.provider, id: track.id)
+        let lossless = UserDefaults.standard.bool(forKey: "sphereStreamLossless")
+        let req = try api.makeDownloadRequest(provider: track.provider, id: track.id, lossless: lossless)
         let (data, resp) = try await URLSession.shared.data(for: req)
         if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             let msg = String(data: data, encoding: .utf8) ?? ""
             throw SphereAPIError.http(status: http.statusCode, message: msg)
         }
+
+        // Pick extension from server-reported content type so lossless tracks
+        // are saved as .flac and play back natively in AVPlayer.
+        let contentType = (resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type")?.lowercased() ?? ""
+        let ext: String
+        if contentType.contains("flac") {
+            ext = "flac"
+        } else if contentType.contains("wav") {
+            ext = "wav"
+        } else {
+            ext = "mp3"
+        }
+        let fileName = "\(track.provider)-\(track.id).\(ext)"
+        let dest = downloadsDir.appendingPathComponent(fileName, isDirectory: false)
         try data.write(to: dest, options: [.atomic])
 
         let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)

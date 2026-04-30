@@ -181,11 +181,19 @@ struct SettingsOtherScreen: View {
     let isEnglish: Bool
     let isDarkMode: Bool
     @AppStorage("isEnglish") private var isEnglishStorage: Bool = false
+    @AppStorage("sphereStreamLossless") private var streamLossless: Bool = false
     @ObservedObject private var discord = DiscordRPC.shared
     var onAddMusic: () -> Void
 
     private var languageValue: String { isEnglishStorage ? "English" : "Русский" }
     private var addMusicTitle: String { isEnglish ? "Add music from device" : "Добавить музыку с устройства" }
+
+    private var losslessTitle: String {
+        let onWord = isEnglish ? "On" : "Вкл"
+        let offWord = isEnglish ? "Off" : "Выкл"
+        let label = isEnglish ? "Lossless audio" : "Lossless-аудио"
+        return "\(label): \(streamLossless ? onWord : offWord)"
+    }
 
     private var discordButtonTitle: String {
         if let name = discord.discordUsername {
@@ -231,6 +239,29 @@ struct SettingsOtherScreen: View {
                                     Circle().fill(isDarkMode ? .white : accent)
                                     Image(systemName: "plus.circle.fill")
                                         .font(.system(size: 16, weight: .semibold))
+                                        .foregroundStyle(isDarkMode ? accent : .white)
+                                }
+                                .frame(width: 32, height: 32)
+                                .padding(.leading, 6)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.tint(isDarkMode ? accent : .white).interactive(), in: Capsule())
+                    .foregroundStyle(isDarkMode ? .white : accent)
+                    .shadow(color: isDarkMode ? .clear : Color.black.opacity(0.20), radius: 18, x: 0, y: 8)
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) { streamLossless.toggle() }
+                    } label: {
+                        Text(losslessTitle)
+                            .font(.system(size: 16, weight: .semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .overlay(alignment: .leading) {
+                                ZStack {
+                                    Circle().fill(isDarkMode ? .white : accent)
+                                    Image(systemName: streamLossless ? "waveform.badge.plus" : "waveform")
+                                        .font(.system(size: 14, weight: .semibold))
                                         .foregroundStyle(isDarkMode ? accent : .white)
                                 }
                                 .frame(width: 32, height: 32)
@@ -320,6 +351,29 @@ struct SettingsOtherScreen: View {
                                     Circle().fill(isDarkMode ? .white : accent)
                                     Image(systemName: "plus.circle.fill")
                                         .font(.system(size: 16, weight: .semibold))
+                                        .foregroundStyle(isDarkMode ? accent : .white)
+                                }
+                                .frame(width: 32, height: 32)
+                                .padding(.leading, 6)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .background((isDarkMode ? accent : .white), in: Capsule())
+                    .foregroundStyle(isDarkMode ? .white : accent)
+                    .shadow(color: isDarkMode ? .clear : Color.black.opacity(0.20), radius: 18, x: 0, y: 8)
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) { streamLossless.toggle() }
+                    } label: {
+                        Text(losslessTitle)
+                            .font(.system(size: 16, weight: .semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .overlay(alignment: .leading) {
+                                ZStack {
+                                    Circle().fill(isDarkMode ? .white : accent)
+                                    Image(systemName: streamLossless ? "waveform.badge.plus" : "waveform")
+                                        .font(.system(size: 14, weight: .semibold))
                                         .foregroundStyle(isDarkMode ? accent : .white)
                                 }
                                 .frame(width: 32, height: 32)

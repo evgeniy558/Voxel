@@ -676,13 +676,14 @@ final class SphereAPIClient: ObservableObject {
 
     // MARK: - Offline download helpers
 
-    func downloadURL(provider: String, id: String) -> URL? {
-        URL(string: baseURL + "/tracks/\(escape(provider))/\(escape(id))/download")
+    func downloadURL(provider: String, id: String, lossless: Bool = false) -> URL? {
+        let suffix = lossless ? "?quality=flac" : ""
+        return URL(string: baseURL + "/tracks/\(escape(provider))/\(escape(id))/download\(suffix)")
     }
 
-    func makeDownloadRequest(provider: String, id: String) throws -> URLRequest {
+    func makeDownloadRequest(provider: String, id: String, lossless: Bool = false) throws -> URLRequest {
         guard let token = jwt else { throw SphereAPIError.notAuthenticated }
-        guard let url = downloadURL(provider: provider, id: id) else { throw SphereAPIError.invalidURL }
+        guard let url = downloadURL(provider: provider, id: id, lossless: lossless) else { throw SphereAPIError.invalidURL }
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

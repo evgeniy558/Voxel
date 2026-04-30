@@ -86,16 +86,24 @@ func (h *Handler) GetTrackStream(w http.ResponseWriter, r *http.Request) {
 // ProxyStream resolves the stream URL and redirects the client to the CDN.
 // For providers with IP-locked URLs (YouTube), it proxies the audio data.
 // For Deezer-with-ARL, it proxies AND decrypts BF_CBC_STRIPE on the fly.
+//
+// Optional `?quality=` query parameter:
+//   - "flac"  → Deezer FLAC (16-bit/44.1kHz, true lossless; needs HiFi ARL)
+//   - "high"  → Deezer MP3_320 (320 kbps; needs Premium ARL)
+//   - "low" / unset → Deezer MP3_128 (works on free accounts)
+//
+// For non-Deezer providers the parameter is currently a no-op.
 func (h *Handler) ProxyStream(w http.ResponseWriter, r *http.Request) {
 	prov := chi.URLParam(r, "provider")
 	id := chi.URLParam(r, "id")
+	quality := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("quality")))
 
 	// Deezer special-case: full-track audio comes back encrypted with
 	// BF_CBC_STRIPE, so we MUST proxy + decrypt server-side. Falls through to
 	// the normal stream resolver below if the ARL is not configured.
 	if prov == "deezer" {
 		if dz := h.svc.DeezerProvider(); dz != nil && dz.HasFullTrackSession() {
-			if h.proxyDeezer(w, r, dz, id) {
+			if h.proxyDeezer(w, r, dz, id, quality) {
 				return
 			}
 		}
@@ -123,10 +131,38 @@ func (h *Handler) ProxyStream(w http.ResponseWriter, r *http.Request) {
 // chunks as they arrive. Returns true when the response was handled (success
 // or a definitive error written to w); false to let the caller fall back to
 // the normal stream resolver path.
-func (h *Handler) proxyDeezer(w http.ResponseWriter, r *http.Request, dz *provider.Deezer, sngID string) bool {
-	encURL, _, err := dz.FullTrackSession().ResolveStreamURL(r.Context(), sngID, "MP3_128")
-	if err != nil {
-		log.Printf("[deezer-stream] resolve %s failed: %v — falling back", sngID, err)
+//
+// `quality` controls the codec ladder we walk: "flac" → FLAC then 320/128
+// fallbacks; "high" → 320 then 128; default → 128 only. We always degrade
+// gracefully when an account lacks the Premium scope for the higher tier.
+func (h *Handler) proxyDeezer(w http.ResponseWriter, r *http.Request, dz *provider.Deezer, sngID, quality string) bool {
+	var ladder []string
+	switch quality {
+	case "flac", "lossless":
+		ladder = []string{"FLAC", "MP3_320", "MP3_128"}
+	case "high", "320", "mp3_320":
+		ladder = []string{"MP3_320", "MP3_128"}
+	default:
+		ladder = []string{"MP3_128"}
+	}
+
+	var (
+		encURL    string
+		chosen    string
+		lastErr   error
+		sess      = dz.FullTrackSession()
+	)
+	for _, q := range ladder {
+		u, _, err := sess.ResolveStreamURL(r.Context(), sngID, q)
+		if err == nil && u != "" {
+			encURL = u
+			chosen = q
+			break
+		}
+		lastErr = err
+	}
+	if encURL == "" {
+		log.Printf("[deezer-stream] resolve %s ladder=%v failed: %v — falling back", sngID, ladder, lastErr)
 		return false
 	}
 	upstreamReq, err := http.NewRequestWithContext(r.Context(), "GET", encURL, nil)
@@ -166,14 +202,19 @@ func (h *Handler) proxyDeezer(w http.ResponseWriter, r *http.Request, dz *provid
 		return true
 	}
 
-	w.Header().Set("Content-Type", "audio/mpeg")
+	contentType := "audio/mpeg"
+	if chosen == "FLAC" {
+		contentType = "audio/flac"
+	}
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.Header().Set("X-Sphere-Audio-Quality", chosen) // surfaces actual quality to the client
 	if cl := resp.Header.Get("Content-Length"); cl != "" {
 		// Stripe-decrypted stream has the same byte length as the encrypted one.
 		w.Header().Set("Content-Length", cl)
 	}
 	w.WriteHeader(http.StatusOK)
-	log.Printf("[deezer-stream] %s ok size=%s", sngID, resp.Header.Get("Content-Length"))
+	log.Printf("[deezer-stream] %s ok format=%s size=%s requested=%q", sngID, chosen, resp.Header.Get("Content-Length"), quality)
 
 	flusher, _ := w.(http.Flusher)
 	buf := make([]byte, 32*1024)
@@ -458,17 +499,7 @@ func sanitizeFilenamePart(s string) string {
 func (h *Handler) DownloadTrack(w http.ResponseWriter, r *http.Request) {
 	prov := chi.URLParam(r, "provider")
 	id := chi.URLParam(r, "id")
-
-	streamURL, err := h.svc.GetTrackStreamURL(r.Context(), prov, id)
-	if err != nil || strings.TrimSpace(streamURL) == "" {
-		// Spotify only provides previews; if we can't resolve anything, downloading is unavailable.
-		if prov == "spotify" {
-			http.Error(w, `{"error":"download_not_available"}`, http.StatusConflict)
-			return
-		}
-		http.Error(w, `{"error":"stream not available"}`, http.StatusNotFound)
-		return
-	}
+	quality := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("quality")))
 
 	meta, _ := h.svc.GetTrack(r.Context(), prov, id)
 	base := "track"
@@ -480,6 +511,27 @@ func (h *Handler) DownloadTrack(w http.ResponseWriter, r *http.Request) {
 		} else if t != "" {
 			base = t
 		}
+	}
+
+	// Deezer + ARL: stream the decrypted bytes directly. The CDN already serves
+	// the format (MP3 or FLAC) we need, so re-encoding through ffmpeg would only
+	// add latency and (for FLAC→MP3) destroy the whole point of lossless.
+	if prov == "deezer" {
+		if dz := h.svc.DeezerProvider(); dz != nil && dz.HasFullTrackSession() {
+			if h.downloadDeezer(w, r, dz, id, quality, base) {
+				return
+			}
+		}
+	}
+
+	streamURL, err := h.svc.GetTrackStreamURL(r.Context(), prov, id)
+	if err != nil || strings.TrimSpace(streamURL) == "" {
+		if prov == "spotify" {
+			http.Error(w, `{"error":"download_not_available"}`, http.StatusConflict)
+			return
+		}
+		http.Error(w, `{"error":"stream not available"}`, http.StatusNotFound)
+		return
 	}
 
 	w.Header().Set("Content-Type", "audio/mpeg")
@@ -513,7 +565,6 @@ func (h *Handler) DownloadTrack(w http.ResponseWriter, r *http.Request) {
 	_ = stdout.Close()
 	_ = cmd.Wait()
 	if copyErr != nil {
-		// Best-effort: dump ffmpeg stderr to logs for debugging.
 		if stderr != nil {
 			b, _ := io.ReadAll(stderr)
 			if len(b) > 0 {
@@ -521,6 +572,89 @@ func (h *Handler) DownloadTrack(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// downloadDeezer streams a decrypted Deezer track (MP3 or FLAC) as an
+// attachment. Returns true when the response was handled.
+func (h *Handler) downloadDeezer(w http.ResponseWriter, r *http.Request, dz *provider.Deezer, sngID, quality, basename string) bool {
+	var ladder []string
+	switch quality {
+	case "flac", "lossless":
+		ladder = []string{"FLAC", "MP3_320", "MP3_128"}
+	case "high", "320", "mp3_320":
+		ladder = []string{"MP3_320", "MP3_128"}
+	default:
+		ladder = []string{"MP3_320", "MP3_128"}
+	}
+
+	var (
+		encURL  string
+		chosen  string
+		lastErr error
+		sess    = dz.FullTrackSession()
+	)
+	for _, q := range ladder {
+		u, _, err := sess.ResolveStreamURL(r.Context(), sngID, q)
+		if err == nil && u != "" {
+			encURL = u
+			chosen = q
+			break
+		}
+		lastErr = err
+	}
+	if encURL == "" {
+		log.Printf("[deezer-download] resolve %s ladder=%v failed: %v", sngID, ladder, lastErr)
+		return false
+	}
+
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), "GET", encURL, nil)
+	if err != nil {
+		http.Error(w, `{"error":"deezer request"}`, http.StatusInternalServerError)
+		return true
+	}
+	upstreamReq.Header.Set("User-Agent", provider.DeezerUA)
+
+	httpClient := &http.Client{Timeout: 0}
+	resp, err := httpClient.Do(upstreamReq)
+	if err != nil {
+		log.Printf("[deezer-download] upstream %s: %v", sngID, err)
+		http.Error(w, `{"error":"deezer upstream"}`, http.StatusBadGateway)
+		return true
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		log.Printf("[deezer-download] upstream %s: HTTP %d", sngID, resp.StatusCode)
+		http.Error(w, `{"error":"deezer upstream status"}`, http.StatusBadGateway)
+		return true
+	}
+
+	key := provider.DeezerBlowfishKey(sngID)
+	plain, err := provider.NewDeezerStripeReader(resp.Body, key)
+	if err != nil {
+		http.Error(w, `{"error":"deezer cipher"}`, http.StatusInternalServerError)
+		return true
+	}
+
+	ext := "mp3"
+	contentType := "audio/mpeg"
+	if chosen == "FLAC" {
+		ext = "flac"
+		contentType = "audio/flac"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+basename+"."+ext+`"`)
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	if cl := resp.Header.Get("Content-Length"); cl != "" {
+		w.Header().Set("Content-Length", cl)
+	}
+	w.WriteHeader(http.StatusOK)
+	log.Printf("[deezer-download] %s ok format=%s requested=%q", sngID, chosen, quality)
+
+	_, copyErr := io.Copy(w, plain)
+	if copyErr != nil {
+		log.Printf("[deezer-download] copy error %s: %v", sngID, copyErr)
+	}
+	return true
 }
 
 func (h *Handler) ProxyStreamHQ(w http.ResponseWriter, r *http.Request) {

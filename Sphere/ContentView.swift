@@ -1884,7 +1884,9 @@ private struct MainAppView: View {
                 if let local = DownloadsStore.shared.localFileURL(provider: track.provider, id: track.id) {
                     url = local
                 } else {
-                    let proxyURLString = "\(proxyBase)/tracks/\(escapedProvider)/\(escapedId)/audio"
+                    let lossless = UserDefaults.standard.bool(forKey: "sphereStreamLossless")
+                    let qualitySuffix = lossless ? "?quality=flac" : ""
+                    let proxyURLString = "\(proxyBase)/tracks/\(escapedProvider)/\(escapedId)/audio\(qualitySuffix)"
                     guard let u = URL(string: proxyURLString) else {
                         await MainActor.run {
                             playbackErrorMessage = isEnglish
