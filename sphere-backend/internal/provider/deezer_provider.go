@@ -14,11 +14,30 @@ import (
 type Deezer struct {
 	httpClient  *http.Client
 	geniusToken string
+	session     *DeezerSession // optional; nil → only previews available
 }
 
 func NewDeezer(geniusToken string) *Deezer {
 	return &Deezer{httpClient: &http.Client{Timeout: 10 * time.Second}, geniusToken: geniusToken}
 }
+
+// NewDeezerWithARL wires the Deezer GW session that unlocks full-track
+// streaming. When `arl` is empty, full audio falls back to YouTube/SoundCloud.
+func NewDeezerWithARL(geniusToken, arl string) *Deezer {
+	return &Deezer{
+		httpClient:  &http.Client{Timeout: 10 * time.Second},
+		geniusToken: geniusToken,
+		session:     NewDeezerSession(arl),
+	}
+}
+
+// HasFullTrackSession reports whether this provider can serve real audio
+// (encrypted CDN URL + Blowfish key) rather than the 30s public preview.
+func (d *Deezer) HasFullTrackSession() bool { return d.session != nil }
+
+// FullTrackSession exposes the underlying session so the music handler can
+// do the streaming + Blowfish decryption itself.
+func (d *Deezer) FullTrackSession() *DeezerSession { return d.session }
 
 func (d *Deezer) Name() string { return "deezer" }
 
@@ -75,12 +94,22 @@ func (d *Deezer) GetTrack(ctx context.Context, id string) (*model.Track, error) 
 	return &t, nil
 }
 
-// GetTrackStreamURL: Deezer's public API only exposes 30-second `preview` URLs —
-// returning that here would lock playback to 30s. We deliberately return an
-// error so the music service falls back to YouTube/SoundCloud (see
-// music/service.go::GetTrackStreamURL) and resolves the full track.
+// GetTrackStreamURL returns the encrypted Deezer CDN URL when a `DEEZER_ARL`
+// session is configured. The music handler is responsible for fetching the
+// bytes, running them through `NewDeezerStripeReader` and serving plaintext
+// audio to the client.
+//
+// Without an ARL, the public Deezer API only ships 30-second previews, so we
+// return an error and let the music service fall back to YouTube/SoundCloud.
 func (d *Deezer) GetTrackStreamURL(ctx context.Context, id string) (string, error) {
-	return "", fmt.Errorf("deezer public api: 30s preview only — fallback required")
+	if d.session == nil {
+		return "", fmt.Errorf("deezer: DEEZER_ARL not configured (full track unavailable; using fallback)")
+	}
+	encryptedURL, _, err := d.session.ResolveStreamURL(ctx, id, "MP3_128")
+	if err != nil {
+		return "", fmt.Errorf("deezer full-track: %w", err)
+	}
+	return encryptedURL, nil
 }
 
 func (d *Deezer) GetLyrics(ctx context.Context, id string) (*model.Lyrics, error) {

@@ -33,6 +33,11 @@ type Config struct {
 	VKToken          string
 	YandexToken      string
 	GeniusToken      string
+	// DeezerARL is a long-lived `arl` cookie from a logged-in deezer.com session.
+	// When present, the Deezer provider unlocks full-track streaming via Deezer's
+	// internal `gw-light` + `media.deezer.com/v1/get_url` APIs (otherwise public
+	// Deezer only exposes 30-second previews).
+	DeezerARL string
 }
 
 func Load() (*Config, error) {
@@ -54,6 +59,7 @@ func Load() (*Config, error) {
 		VKToken:          getEnv("VK_SERVICE_TOKEN", "vk1.a.lm-8un_JtuwYfdPCboRYr_ZNPTisJlaSDrM4bDy_BAB_x_e5B8ytHmJxslmsTro0fgcz3DaiWOz_WzjlTAEdY0cwh2G4ybY9pda1-MDYEPzvu2XWUAqOR7vWwM7cFPGb7oCbSr-0jJih5Jx2BJQilc5yrEy5MuHcqNvdMo9TZMh_R0e9W7k60IQP-Cl2g9dIJHTJjvY69hox6lqx8_7nYg"),
 		YandexToken:      getEnv("YANDEX_SERVICE_TOKEN", "y0__xCnx4f-Bhje-AYg19WehxcdBrdHfqxPPx2v5vOjqAxuTyubHA"),
 		GeniusToken:      getEnv("GENIUS_TOKEN", "zTGbOmZjiWvldeVVVOMWAmmmAp0Aont38WMELq2DPqpihhThnVnj2o0FsZs9N30m"),
+		DeezerARL:        getEnv("DEEZER_ARL", ""),
 		RecaptchaSecret:  getEnv("RECAPTCHA_SECRET", "6LfytsssAAAAAKgi5g2SL6wU3B6qeUglw9YKJ6J9"),
 		RecaptchaSiteKey: getEnv("RECAPTCHA_SITE_KEY", "6LfytsssAAAAAITYZm3exkx5ODWZ8c8Nd_nysOBj"),
 		ResendAPIKey:     getEnv("RESEND_API_KEY", "re_u4Yu3Sqg_Md9pqwsAV6hufnKA2y73mMue"),

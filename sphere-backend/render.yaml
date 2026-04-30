@@ -84,3 +84,11 @@ services:
         sync: false
       - key: GENIUS_TOKEN
         sync: false
+
+      # Deezer ARL cookie from a logged-in deezer.com session.
+      # Required for full-track audio (otherwise only 30-second public previews
+      # are available and the player falls back to YouTube/SoundCloud).
+      # Get it from your browser: deezer.com → DevTools → Application → Cookies
+      # → copy the value of `arl`. Premium account → also unlocks MP3_320/FLAC.
+      - key: DEEZER_ARL
+        sync: false

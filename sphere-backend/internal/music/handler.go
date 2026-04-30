@@ -85,9 +85,21 @@ func (h *Handler) GetTrackStream(w http.ResponseWriter, r *http.Request) {
 
 // ProxyStream resolves the stream URL and redirects the client to the CDN.
 // For providers with IP-locked URLs (YouTube), it proxies the audio data.
+// For Deezer-with-ARL, it proxies AND decrypts BF_CBC_STRIPE on the fly.
 func (h *Handler) ProxyStream(w http.ResponseWriter, r *http.Request) {
 	prov := chi.URLParam(r, "provider")
 	id := chi.URLParam(r, "id")
+
+	// Deezer special-case: full-track audio comes back encrypted with
+	// BF_CBC_STRIPE, so we MUST proxy + decrypt server-side. Falls through to
+	// the normal stream resolver below if the ARL is not configured.
+	if prov == "deezer" {
+		if dz := h.svc.DeezerProvider(); dz != nil && dz.HasFullTrackSession() {
+			if h.proxyDeezer(w, r, dz, id) {
+				return
+			}
+		}
+	}
 
 	streamURL, err := h.svc.GetTrackStreamURL(r.Context(), prov, id)
 	if err != nil {
@@ -105,6 +117,81 @@ func (h *Handler) ProxyStream(w http.ResponseWriter, r *http.Request) {
 	// SoundCloud (and others with a direct CDN URL): 302 so AVPlayer buffers from origin
 	// instead of a byte-streaming proxy (fixes choppy playback on Simulator / some networks).
 	http.Redirect(w, r, streamURL, http.StatusTemporaryRedirect)
+}
+
+// proxyDeezer streams a full-length Deezer track, decrypting BF_CBC_STRIPE
+// chunks as they arrive. Returns true when the response was handled (success
+// or a definitive error written to w); false to let the caller fall back to
+// the normal stream resolver path.
+func (h *Handler) proxyDeezer(w http.ResponseWriter, r *http.Request, dz *provider.Deezer, sngID string) bool {
+	encURL, _, err := dz.FullTrackSession().ResolveStreamURL(r.Context(), sngID, "MP3_128")
+	if err != nil {
+		log.Printf("[deezer-stream] resolve %s failed: %v — falling back", sngID, err)
+		return false
+	}
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), "GET", encURL, nil)
+	if err != nil {
+		http.Error(w, `{"error":"deezer request"}`, http.StatusInternalServerError)
+		return true
+	}
+	if rng := r.Header.Get("Range"); rng != "" {
+		// Deezer's encrypted CDN supports Range, but partial bytes mid-chunk
+		// would break the stripe decryptor. We deliberately ignore client
+		// Range and stream the whole file — AVPlayer handles this fine and
+		// the file is typically a few MB. Future improvement: align Range to
+		// 2048-byte boundaries, decrypt accordingly.
+		_ = rng
+	}
+	upstreamReq.Header.Set("User-Agent", provider.DeezerUA)
+
+	httpClient := &http.Client{Timeout: 0} // streaming; no overall deadline
+	resp, err := httpClient.Do(upstreamReq)
+	if err != nil {
+		log.Printf("[deezer-stream] upstream %s: %v", sngID, err)
+		http.Error(w, `{"error":"deezer upstream"}`, http.StatusBadGateway)
+		return true
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		log.Printf("[deezer-stream] upstream %s: HTTP %d", sngID, resp.StatusCode)
+		http.Error(w, `{"error":"deezer upstream status"}`, http.StatusBadGateway)
+		return true
+	}
+
+	key := provider.DeezerBlowfishKey(sngID)
+	plain, err := provider.NewDeezerStripeReader(resp.Body, key)
+	if err != nil {
+		log.Printf("[deezer-stream] cipher init %s: %v", sngID, err)
+		http.Error(w, `{"error":"deezer cipher"}`, http.StatusInternalServerError)
+		return true
+	}
+
+	w.Header().Set("Content-Type", "audio/mpeg")
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	if cl := resp.Header.Get("Content-Length"); cl != "" {
+		// Stripe-decrypted stream has the same byte length as the encrypted one.
+		w.Header().Set("Content-Length", cl)
+	}
+	w.WriteHeader(http.StatusOK)
+	log.Printf("[deezer-stream] %s ok size=%s", sngID, resp.Header.Get("Content-Length"))
+
+	flusher, _ := w.(http.Flusher)
+	buf := make([]byte, 32*1024)
+	for {
+		n, readErr := plain.Read(buf)
+		if n > 0 {
+			if _, wErr := w.Write(buf[:n]); wErr != nil {
+				return true
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		if readErr != nil {
+			break
+		}
+	}
+	return true
 }
 
 func (h *Handler) proxyUpstream(w http.ResponseWriter, r *http.Request, streamURL string) {

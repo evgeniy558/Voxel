@@ -81,7 +81,7 @@ func main() {
 	if cfg.SoundCloudID != "" {
 		providers = append(providers, provider.NewSoundCloud(cfg.SoundCloudID, cfg.SoundCloudSecret))
 	}
-	providers = append(providers, provider.NewDeezer(cfg.GeniusToken))
+	providers = append(providers, provider.NewDeezerWithARL(cfg.GeniusToken, cfg.DeezerARL))
 	musicSvc := music.NewService(providers...)
 	music.SetGeniusToken(cfg.GeniusToken)
 	prefsSvc := preferences.NewService(pool)

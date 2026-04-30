@@ -28,6 +28,17 @@ func NewService(providers ...provider.MusicProvider) *Service {
 	return &Service{providers: m}
 }
 
+// DeezerProvider returns the Deezer provider when registered (so handlers
+// can reach the GW session for full-track streaming). Returns nil otherwise.
+func (s *Service) DeezerProvider() *provider.Deezer {
+	if p, ok := s.providers["deezer"]; ok {
+		if dz, ok := p.(*provider.Deezer); ok {
+			return dz
+		}
+	}
+	return nil
+}
+
 func (s *Service) Search(ctx context.Context, query string, limit int, providerFilter string) *model.SearchResult {
 	if providerFilter != "" && providerFilter != "all" {
 		if p, ok := s.providers[providerFilter]; ok {
